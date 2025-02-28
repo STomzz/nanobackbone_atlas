@@ -204,34 +204,7 @@ Result nanoTracker::GetResult(){
     }
     outData = reinterpret_cast<float*>(outHostData);
 
-    // create map<confidence, class> and sorted by maximum
-    map<float, unsigned int, greater<float> > resultMap;
-    for (unsigned int j = 0; j < len / sizeof(float); ++j) {
-        resultMap[*outData] = j;
-        outData++;
-    }
-
-    // do data processing with softmax and print top 1 classes
-    // double totalValue=0.0;
-    // for (auto it = resultMap.begin(); it != resultMap.end(); ++it) {
-    //     totalValue += exp(it->first);
-    // }
-
-    // // get max <confidence, class>
-    // float confidence = resultMap.begin()->first;
-    // unsigned int index = resultMap.begin()->second;
-    // string line = format("label:%d  conf:%lf  class:%s", index,
-    //              exp(confidence) / totalValue, label[index].c_str());
-
-    // // write image to ../out/
-    // cv::putText(srcImage, line, Point(0,35), cv::FONT_HERSHEY_TRIPLEX, 1.0, Scalar(255,0,0),2);
-
-    // int sepIndex = imagePath.find_last_of("/");
-    // string fileName = imagePath.substr(sepIndex + 1, -1);
-    // string outputName = "out_" + fileName;
-    // imwrite(outputName, srcImage);
-    // cout << outputName << endl;
-    // cout << line << endl;
+ 
 
     ret = aclrtFreeHost(outHostData);
     outHostData = nullptr;
