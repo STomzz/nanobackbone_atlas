@@ -22,6 +22,7 @@ class nanoTracker{
         Result ProcessInput(const string testImgPath);
         Result Inference();
         Result GetResult();
+        Result Conv(float*output1, float*output2);
     private:
         void ReleaseResource();
         int32_t deviceId_;
@@ -263,6 +264,24 @@ void nanoTracker::ReleaseResource(){
     ret = aclFinalize();
     if (ret != ACL_SUCCESS) {
         ERROR_LOG("aclFinalize failed, errorCode is %d", ret);
+    }
+}
+
+//output1:1x96x16x16   output2 as kernel :1x96x8x8
+Result nanoTracker::Conv(float*output1, float*output2){
+    int out_H = 9;
+    int out_W = 9;
+    int out_C = 96;
+    for(int out_h = 0; out_h < out_H; out_h++){
+        for(int out_w = 0; out_w < out_W; out_w++){
+            for(int out_c = 0;out_c < out_C;out_c++){
+
+                
+
+
+            }
+        }
+
     }
 }
 
