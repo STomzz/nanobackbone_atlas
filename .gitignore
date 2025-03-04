@@ -1,5 +1,4 @@
-out
-models/*.onnx
-build
+models/*
+build/*
 .vscode
 .git
