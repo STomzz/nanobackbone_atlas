@@ -2,8 +2,10 @@
 #include <dirent.h>
 #include "acl/acl.h"
 #include "label.h"
+#include <chrono>
 #define INFO_LOG(fmt, ...) fprintf(stdout, "[INFO]  " fmt "\n", ##__VA_ARGS__);fflush(stdout)
 #define ERROR_LOG(fmt, ...)fprintf(stderr, "[ERROR] " fmt "\n", ##__VA_ARGS__)
+#define times 10000
 
 using namespace cv;
 using namespace std;
@@ -287,6 +289,7 @@ Result nanoTracker::Conv(float*output1, float*output2){
 
 
 int main(){
+
     const char * modelPath = "../models/nanotrack_backbone_om.om";
     const string imagePath = "../data/000.png";
     int32_t device = 0;
@@ -302,17 +305,30 @@ int main(){
         ERROR_LOG("InitResource  failed");
         return FAILED;
     }
+    
+    //开始计时
+    auto start = std::chrono::high_resolution_clock::now();
+
     ret = nanobackbone.ProcessInput(imagePath);
     if (ret != SUCCESS) {
             ERROR_LOG("ProcessInput  failed");
             return FAILED;
     }
 
-    ret = nanobackbone.Inference();
+
+    for(int i = 0; i<times;i++){
+        ret = nanobackbone.Inference();
     if (ret != SUCCESS) {
             ERROR_LOG("Inference  failed");
             return FAILED;
         }
+    }
+    
+    //结束计时
+    auto end = std::chrono::high_resolution_clock::now(); 
+    auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
+    std::cout<<times<< "轮消耗时间:--"<< duration.count() <<std::endl;
+    std::cout<<times<< "轮测量帧率:--"<< times * 1000000.0 /duration.count() <<std::endl;
 
     ret = nanobackbone.GetResult();
     if (ret != SUCCESS) {
