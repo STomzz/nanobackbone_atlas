@@ -1,18 +1,20 @@
 #!/bin/bash
 ScriptPath="$( cd "$(dirname "$BASH_SOURCE")" ; pwd -P )"
 ModelPath="${ScriptPath}/../models"
+BuildPath="${ScriptPath}/../build"
 
 
 function build()
 {
-  if [ -d ${ScriptPath}/../build/intermediates/host ];then
-    rm -rf ${ScriptPath}/../build/intermediates/host
+  if [ -d ${BuildPath} ];then
+    rm -rf ${BuildPath}
   fi
 
-  mkdir -p ${ScriptPath}/../build/intermediates/host
-  cd ${ScriptPath}/../build/intermediates/host
+  mkdir -p ${BuildPath}
+  cd ${BuildPath}
 
-  cmake ../../../src -DCMAKE_CXX_COMPILER=g++ -DCMAKE_SKIP_RPATH=TRUE
+  cmake ../src -DCMAKE_CXX_COMPILER=g++ -DCMAKE_SKIP_RPATH=TRUE
+
   if [ $? -ne 0 ];then
     echo "[ERROR] cmake error, Please check your environment!"
     return 1
