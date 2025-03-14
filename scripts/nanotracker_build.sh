@@ -6,6 +6,8 @@ BuildPath="${ScriptPath}/../build"
 
 function build()
 {
+  rm -rf ${ScriptPath}/../out/*
+  
   if [ -d ${BuildPath} ];then
     rm -rf ${BuildPath}
   fi
