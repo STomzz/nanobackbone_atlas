@@ -2,90 +2,99 @@
 #include <dirent.h>
 #include "acl/acl.h"
 #include "label.h"
-#include <chrono>
-#define INFO_LOG(fmt, ...) fprintf(stdout, "[INFO]  " fmt "\n", ##__VA_ARGS__);fflush(stdout)
-#define ERROR_LOG(fmt, ...)fprintf(stderr, "[ERROR] " fmt "\n", ##__VA_ARGS__)
-#define times 10000
+#define INFO_LOG(fmt, ...)                               \
+    fprintf(stdout, "[INFO]  " fmt "\n", ##__VA_ARGS__); \
+    fflush(stdout)
+#define ERROR_LOG(fmt, ...) fprintf(stderr, "[ERROR] " fmt "\n", ##__VA_ARGS__)
 
 using namespace cv;
 using namespace std;
 
-typedef enum Result {
+typedef enum Result
+{
     SUCCESS = 0,
     FAILED = 1
 } Result;
 
-class nanoTracker{
-    public:
-        nanoTracker(int32_t device, const char* ModelPath,
-        int32_t modelWidth, int32_t modelHeight);
-        ~nanoTracker();
-        Result InitResource();
-        Result ProcessInput(const string testImgPath);
-        Result Inference();
-        Result GetResult();
-        Result Conv(float*output1, float*output2);
-    private:
-        void ReleaseResource();
-        int32_t deviceId_;
-        aclrtContext context_;
-        aclrtStream stream_;
+class nanoTracker
+{
+public:
+    nanoTracker(int32_t device, const char *ModelPath,
+                int32_t modelWidth, int32_t modelHeight);
+    ~nanoTracker();
+    Result InitResource();
+    Result ProcessInput(const string testImgPath);
+    Result Inference();
+    Result GetResult();
+    Result Conv(float *output1, float *output2);
 
-        uint32_t modelId_;
-        const char* modelPath_;
-        int32_t modelWidth_;
-        int32_t modelHeight_;
-        aclmdlDesc *modelDesc_;
-        aclmdlDataset *inputDataset_;
-        aclmdlDataset *outputDataset_;
-        void* inputBuffer_;
-        void *outputBuffer_;
-        size_t inputBufferSize_;
-        float* imageBytes;
-        String imagePath;
-        Mat srcImage;
-        aclrtRunMode runMode_;
+private:
+    void ReleaseResource();
+    int32_t deviceId_;
+    aclrtContext context_;
+    aclrtStream stream_;
+
+    uint32_t modelId_;
+    const char *modelPath_;
+    int32_t modelWidth_;
+    int32_t modelHeight_;
+    aclmdlDesc *modelDesc_;
+    aclmdlDataset *inputDataset_;
+    aclmdlDataset *outputDataset_;
+    void *inputBuffer_;
+    void *outputBuffer_;
+    size_t inputBufferSize_;
+    float *imageBytes;
+    String imagePath;
+    Mat srcImage;
+    aclrtRunMode runMode_;
 };
 
-nanoTracker::nanoTracker(int32_t device, const char* ModelPath,
-        int32_t modelWidth, int32_t modelHeight):
-    deviceId_(device), context_(nullptr), stream_(nullptr), modelId_(0),
-    modelPath_(ModelPath), modelWidth_(modelWidth), modelHeight_(modelHeight),
-    modelDesc_(nullptr), inputDataset_(nullptr), outputDataset_(nullptr){}
+nanoTracker::nanoTracker(int32_t device, const char *ModelPath,
+                         int32_t modelWidth, int32_t modelHeight) : deviceId_(device), context_(nullptr), stream_(nullptr), modelId_(0),
+                                                                    modelPath_(ModelPath), modelWidth_(modelWidth), modelHeight_(modelHeight),
+                                                                    modelDesc_(nullptr), inputDataset_(nullptr), outputDataset_(nullptr) {}
 
-nanoTracker::~nanoTracker(){
+nanoTracker::~nanoTracker()
+{
     ReleaseResource();
 }
 
-Result nanoTracker::InitResource(){
-    const char * aclConfigPath = "";
+Result nanoTracker::InitResource()
+{
+    const char *aclConfigPath = "";
     aclError ret = aclInit(aclConfigPath);
-    if (ret != ACL_SUCCESS) {
+    if (ret != ACL_SUCCESS)
+    {
         ERROR_LOG("aclInit failed, errorCode is %d", ret);
         return FAILED;
     }
 
     ret = aclrtSetDevice(deviceId_);
-    if (ret != ACL_SUCCESS) {
+    if (ret != ACL_SUCCESS)
+    {
         ERROR_LOG("aclrtSetDevice failed, errorCode is %d", ret);
         return FAILED;
     }
 
     ret = aclrtCreateContext(&context_, deviceId_);
-    if (ret != ACL_SUCCESS) {
+    if (ret != ACL_SUCCESS)
+    {
         ERROR_LOG("aclrtCreateContext failed, errorCode is %d", ret);
         return FAILED;
     }
 
     ret = aclrtCreateStream(&stream_);
-    if (ret != ACL_SUCCESS) {
+    if (ret != ACL_SUCCESS)
+    {
         ERROR_LOG("aclrtCreateStream failed, errorCode is %d", ret);
         return FAILED;
     }
 
-     // load model from file
+    // load model from file
     ret = aclmdlLoadFromFile(modelPath_, &modelId_);
-    if (ret != ACL_SUCCESS) {
+    if (ret != ACL_SUCCESS)
+    {
         ERROR_LOG("aclmdlLoadFromFile failed, errorCode is %d", ret);
         return FAILED;
     }
@@ -93,24 +102,27 @@ Result nanoTracker::InitResource(){
     // create description of model
     modelDesc_ = aclmdlCreateDesc();
     ret = aclmdlGetDesc(modelDesc_, modelId_);
-    if (ret != ACL_SUCCESS) {
+    if (ret != ACL_SUCCESS)
+    {
         ERROR_LOG("aclmdlGetDesc failed, errorCode is %d", ret);
         return FAILED;
     }
     ret = aclrtGetRunMode(&runMode_);
-    if (ret == FAILED) {
+    if (ret == FAILED)
+    {
         ERROR_LOG("get runMode failed, errorCode is %d", ret);
         return FAILED;
     }
 
-     // create data set of input
+    // create data set of input
     inputDataset_ = aclmdlCreateDataset();
     size_t inputIndex = 0;
     inputBufferSize_ = aclmdlGetInputSizeByIndex(modelDesc_, inputIndex);
     aclrtMalloc(&inputBuffer_, inputBufferSize_, ACL_MEM_MALLOC_HUGE_FIRST);
     aclDataBuffer *inputData = aclCreateDataBuffer(inputBuffer_, inputBufferSize_);
     ret = aclmdlAddDatasetBuffer(inputDataset_, inputData);
-    if (ret != ACL_SUCCESS) {
+    if (ret != ACL_SUCCESS)
+    {
         ERROR_LOG("aclmdlAddDatasetBuffer failed, errorCode is %d", ret);
         return FAILED;
     }
@@ -122,33 +134,38 @@ Result nanoTracker::InitResource(){
     aclrtMalloc(&outputBuffer_, modelOutputSize, ACL_MEM_MALLOC_HUGE_FIRST);
     aclDataBuffer *outputData = aclCreateDataBuffer(outputBuffer_, modelOutputSize);
     ret = aclmdlAddDatasetBuffer(outputDataset_, outputData);
-    if (ret != ACL_SUCCESS) {
+    if (ret != ACL_SUCCESS)
+    {
         ERROR_LOG("aclmdlAddDatasetBuffer failed, errorCode is %d", ret);
         return FAILED;
     }
-    
+
     return SUCCESS;
 }
 
-//model->input : 1x3x255x255 nchw  
-Result nanoTracker::ProcessInput(const string ImgPath){
+// model->input : 1x3x255x255 nchw
+Result nanoTracker::ProcessInput(const string ImgPath)
+{
     imagePath = ImgPath;
     srcImage = imread(ImgPath);
     Mat resizedImage;
-    resize(srcImage,resizedImage,Size(modelWidth_,modelHeight_));
+    resize(srcImage, resizedImage, Size(modelWidth_, modelHeight_));
 
     int32_t CHANNELS = resizedImage.channels();
     int32_t resizeHeight = resizedImage.rows;
     int32_t resizeWeight = resizedImage.cols;
 
-    //nhwc -> nchw   bgr ? rgb
-    imageBytes = (float*)malloc(CHANNELS * resizeHeight * resizeWeight * sizeof(float));
+    // nhwc -> nchw   bgr ? rgb
+    imageBytes = (float *)malloc(CHANNELS * resizeHeight * resizeWeight * sizeof(float));
     memset(imageBytes, 0, CHANNELS * resizeHeight * resizeWeight * sizeof(float));
-    
-    for(int row = 0; row < resizeHeight; row++){
-        for(int col = 0; col < resizeWeight; col++){
-            for(int channel = 0; channel < CHANNELS; channel++){
-                int new_idx = (channel*resizeHeight+row)*resizeWeight+col;
+
+    for (int row = 0; row < resizeHeight; row++)
+    {
+        for (int col = 0; col < resizeWeight; col++)
+        {
+            for (int channel = 0; channel < CHANNELS; channel++)
+            {
+                int new_idx = (channel * resizeHeight + row) * resizeWeight + col;
                 // std::cout << "img" <<  static_cast<float>(img.ptr<uchar>(row, col)[channel]) << std::endl;
                 imageBytes[new_idx] = static_cast<float>(resizedImage.ptr<uchar>(row, col)[channel]);
                 // input_data[new_idx] = static_cast<float>(img.data[old_idx]);
@@ -156,39 +173,44 @@ Result nanoTracker::ProcessInput(const string ImgPath){
         }
     }
 
-
     return SUCCESS;
 }
 
-Result nanoTracker::Inference(){
+Result nanoTracker::Inference()
+{
     aclrtMemcpyKind kind;
     if (runMode_ == ACL_DEVICE)
     {
         kind = ACL_MEMCPY_DEVICE_TO_HOST;
-    }else{
+    }
+    else
+    {
         kind = ACL_MEMCPY_HOST_TO_DEVICE;
     }
     aclError ret = aclrtMemcpy(inputBuffer_, inputBufferSize_, imageBytes, inputBufferSize_, kind);
-    if (ret != ACL_SUCCESS) {
+    if (ret != ACL_SUCCESS)
+    {
         ERROR_LOG("memcpy  failed, errorCode is %d", ret);
         return FAILED;
     }
 
     // inference
     ret = aclmdlExecute(modelId_, inputDataset_, outputDataset_);
-    if (ret != ACL_SUCCESS) {
+    if (ret != ACL_SUCCESS)
+    {
         ERROR_LOG("execute model failed, errorCode is %d", ret);
         return FAILED;
     }
     return SUCCESS;
 }
 
-Result nanoTracker::GetResult(){
+Result nanoTracker::GetResult()
+{
     void *outHostData = nullptr;
     float *outData = nullptr;
     size_t outputIndex = 0;
-    aclDataBuffer* dataBuffer = aclmdlGetDatasetBuffer(outputDataset_, outputIndex);
-    void* data = aclGetDataBufferAddr(dataBuffer);
+    aclDataBuffer *dataBuffer = aclmdlGetDatasetBuffer(outputDataset_, outputIndex);
+    void *data = aclGetDataBufferAddr(dataBuffer);
     uint32_t len = aclGetDataBufferSizeV2(dataBuffer);
 
     // copy device output data to host
@@ -196,30 +218,33 @@ Result nanoTracker::GetResult(){
     if (runMode_ == ACL_DEVICE)
     {
         kind = ACL_MEMCPY_DEVICE_TO_HOST;
-    }else{
+    }
+    else
+    {
         kind = ACL_MEMCPY_HOST_TO_DEVICE;
     }
     aclrtMallocHost(&outHostData, len);
     aclError ret = aclrtMemcpy(outHostData, len, data, len, kind);
-    if (ret != ACL_SUCCESS) {
+    if (ret != ACL_SUCCESS)
+    {
         ERROR_LOG("memcpy  failed, errorCode is %d", ret);
         return FAILED;
     }
-    outData = reinterpret_cast<float*>(outHostData);
-
- 
+    outData = reinterpret_cast<float *>(outHostData);
 
     ret = aclrtFreeHost(outHostData);
     outHostData = nullptr;
     outData = nullptr;
-    if (ret != ACL_SUCCESS) {
+    if (ret != ACL_SUCCESS)
+    {
         ERROR_LOG("aclrtFreeHost failed, errorCode is %d", ret);
         return FAILED;
     }
     return SUCCESS;
 }
 
-void nanoTracker::ReleaseResource(){
+void nanoTracker::ReleaseResource()
+{
     aclError ret;
     // release resource includes acl resource, data set and unload model
     aclrtFree(inputBuffer_);
@@ -233,75 +258,75 @@ void nanoTracker::ReleaseResource(){
     outputDataset_ = nullptr;
 
     ret = aclmdlDestroyDesc(modelDesc_);
-    if (ret != ACL_SUCCESS) {
+    if (ret != ACL_SUCCESS)
+    {
         ERROR_LOG("destroy description failed, errorCode is %d", ret);
     }
 
     ret = aclmdlUnload(modelId_);
-    if (ret != ACL_SUCCESS) {
+    if (ret != ACL_SUCCESS)
+    {
         ERROR_LOG("unload model failed, errorCode is %d", ret);
     }
 
-    if (stream_ != nullptr) {
+    if (stream_ != nullptr)
+    {
         ret = aclrtDestroyStream(stream_);
-        if (ret != ACL_SUCCESS) {
+        if (ret != ACL_SUCCESS)
+        {
             ERROR_LOG("aclrtDestroyStream failed, errorCode is %d", ret);
         }
         stream_ = nullptr;
     }
 
-    if (context_ != nullptr) {
+    if (context_ != nullptr)
+    {
         ret = aclrtDestroyContext(context_);
-        if (ret != ACL_SUCCESS) {
+        if (ret != ACL_SUCCESS)
+        {
             ERROR_LOG("aclrtDestroyContext failed, errorCode is %d", ret);
         }
         context_ = nullptr;
     }
 
     ret = aclrtResetDevice(deviceId_);
-    if (ret != ACL_SUCCESS) {
+    if (ret != ACL_SUCCESS)
+    {
         ERROR_LOG("aclrtResetDevice failed, errorCode is %d", ret);
     }
 
     ret = aclFinalize();
-    if (ret != ACL_SUCCESS) {
+    if (ret != ACL_SUCCESS)
+    {
         ERROR_LOG("aclFinalize failed, errorCode is %d", ret);
     }
 }
 
-//output1:1x96x16x16   output2 as kernel :1x96x8x8
-Result nanoTracker::Conv(float*output1, float*output2){
-    int out_H = 9;
-    int out_W = 9;
-    int out_C = 96;
-    for(int out_h = 0; out_h < out_H; out_h++){
-        for(int out_w = 0; out_w < out_W; out_w++){
-            for(int out_c = 0;out_c < out_C;out_c++){
-
-                
-
-
-            }
-        }
-
-    }
+// output1:1x96x16x16   output2 as kernel :1x96x8x8
+Result nanoTracker::Conv(float *output1, float *output2)
+{
 }
 
+<<<<<<< HEAD:src/main_backbone.cpp
 
 int main(){
 
     const char * modelPath = "../models/nanotrack_backbone_om.om";
+=======
+int main()
+{
+    const char *modelPath = "../models/nanotrack_backbone_om.om";
+>>>>>>> cf65942 (空):src/main.cpp
     const string imagePath = "../data/000.png";
     int32_t device = 0;
     int32_t modelWidth = 255;
     int32_t modelHeight = 255;
 
-
-    
-    //start
+    // start
     nanoTracker nanobackbone(device, modelPath, modelWidth, modelHeight);
     Result ret = nanobackbone.InitResource();
-    if (ret != SUCCESS) {
+    if (ret != SUCCESS)
+    {
         ERROR_LOG("InitResource  failed");
         return FAILED;
     }
@@ -310,11 +335,13 @@ int main(){
     auto start = std::chrono::high_resolution_clock::now();
 
     ret = nanobackbone.ProcessInput(imagePath);
-    if (ret != SUCCESS) {
-            ERROR_LOG("ProcessInput  failed");
-            return FAILED;
+    if (ret != SUCCESS)
+    {
+        ERROR_LOG("ProcessInput  failed");
+        return FAILED;
     }
 
+<<<<<<< HEAD:src/main_backbone.cpp
 
     for(int i = 0; i<times;i++){
         ret = nanobackbone.Inference();
@@ -329,12 +356,20 @@ int main(){
     auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
     std::cout<<times<< "轮消耗时间:--"<< duration.count() <<std::endl;
     std::cout<<times<< "轮测量帧率:--"<< times * 1000000.0 /duration.count() <<std::endl;
+=======
+    ret = nanobackbone.Inference();
+    if (ret != SUCCESS)
+    {
+        ERROR_LOG("Inference  failed");
+        return FAILED;
+    }
+>>>>>>> cf65942 (空):src/main.cpp
 
     ret = nanobackbone.GetResult();
-    if (ret != SUCCESS) {
-            ERROR_LOG("GetResult  failed");
-            return FAILED;
-        }
+    if (ret != SUCCESS)
+    {
+        ERROR_LOG("GetResult  failed");
+        return FAILED;
+    }
     return SUCCESS;
-
 }
