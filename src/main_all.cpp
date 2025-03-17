@@ -4,11 +4,12 @@
 #include "label.h"
 #include <chrono>
 #include <vector>
+#include <fstream>
 #define INFO_LOG(fmt, ...)                               \
     fprintf(stdout, "[INFO]  " fmt "\n", ##__VA_ARGS__); \
     fflush(stdout)
 #define ERROR_LOG(fmt, ...) fprintf(stderr, "[ERROR] " fmt "\n", ##__VA_ARGS__)
-#define times 10000
+#define times 1
 
 using namespace cv;
 using namespace std;
@@ -29,6 +30,7 @@ public:
     Result ProcessInput(const vector<string> &testImgPaths);
     Result Inference();
     Result GetResult();
+    Result save_bin(const float *outputData, const size_t length, const char *filename);
     // 其他成员函数保持相似
 private:
     void ReleaseResource();
@@ -199,6 +201,10 @@ Result nanoTracker::Inference()
 
 Result nanoTracker::GetResult()
 {
+    const std::vector<size_t> output_shapes = {1 * 2 * 15 * 15, 1 * 4 * 15 * 15};
+    const std::vector<const char *> filenames = {
+        "/workspace/STomzz/nanobackbone_atlas/out/output1.bin",
+        "/workspace/STomzz/nanobackbone_atlas/out/output2.bin"};
     for (size_t i = 0; i < outputBuffers_.size(); ++i)
     {
         void *outHostData = nullptr;
@@ -206,12 +212,39 @@ Result nanoTracker::GetResult()
         aclrtMemcpyKind kind = runMode_ == ACL_DEVICE ? ACL_MEMCPY_DEVICE_TO_HOST : ACL_MEMCPY_HOST_TO_HOST;
         aclrtMemcpy(outHostData, outputBufferSizes_[i], outputBuffers_[i], outputBufferSizes_[i], kind);
 
-        // 处理输出数据（示例）
+        // 处理输出数据（示例）输出1 1*2*15*15 输出2 1*4*15*15
         float *outputData = reinterpret_cast<float *>(outHostData);
-        // TODO: 根据实际需求处理输出
+        // save to .bin
+        try
+        {
+            save_bin(outputData, output_shapes[i], filenames[i]);
+        }
+        catch (const exception &e)
+        {
+            aclrtFreeHost(outHostData);
+            throw;
+        }
 
         aclrtFreeHost(outHostData);
     }
+    return SUCCESS;
+}
+Result nanoTracker::save_bin(const float *outputData, const size_t length, const char *filename)
+{
+    ofstream out_file(filename, ios::binary);
+    if (!out_file)
+    {
+        throw runtime_error("open file failed!");
+    }
+    out_file.write(reinterpret_cast<const char *>(outputData), length * sizeof(float));
+    out_file.close();
+
+    if (!out_file.good())
+    {
+        out_file.close();
+        throw runtime_error("write file failed!");
+    }
+
     return SUCCESS;
 }
 
