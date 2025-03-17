@@ -1,12 +1,15 @@
 #!/bin/bash
 ScriptPath="$( cd "$(dirname "$BASH_SOURCE")" ; pwd -P )"
 ModelPath="${ScriptPath}/../models"
+ModelFile="nanotrack_deploy_model_nchw.om"
 BuildPath="${ScriptPath}/../build"
 
 
 function build()
 {
-  rm -rf ${ScriptPath}/../out/*
+  if [ -d "${ScriptPath}/../out/" ];then
+  rm -rf "${ScriptPath}/../out/"*
+  fi
   
   if [ -d ${BuildPath} ];then
     rm -rf ${BuildPath}
@@ -33,12 +36,12 @@ function main()
 {
   echo "[INFO] nanotracker_backbone preparation"
 
- ret=`find ${ModelPath} -maxdepth 1 -name nanotrack_backbone_om.om 2> /dev/null`
+ ret=`find ${ModelPath} -maxdepth 1 -name "${ModelFile}" 2> /dev/null`
 
    if [[ ${ret} ]];then
-      echo "[INFO] The nanotrack_backbone_om.om already exists.start buiding"
+      echo "[INFO] The "${ModelFile}" already exists.start buiding"
     else
-      echo "[ERROR] nanotrack_backbone_om.om does not exist, please follow the readme to convert the model and place it in the correct position!"
+      echo "[ERROR] "${ModelFile}" does not exist, please follow the readme to convert the model and place it in the correct position!"
       return 1
     fi
 
@@ -47,6 +50,6 @@ function main()
     return 1
   fi
 
-  echo "[INFO] nanotrack_backbone_om.om preparation is complete"
+  echo "[INFO] "${ModelFile}" preparation is complete"
 }
 main

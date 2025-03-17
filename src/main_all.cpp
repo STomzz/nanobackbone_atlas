@@ -285,7 +285,8 @@ void nanoTracker::ReleaseResource()
 int main()
 {
     // const char* modelPath = "../models/nanotrack_all_2.om";
-    const char *modelPath = "../models/nanotrack_deploy_model.om";
+    // const char *modelPath = "../models/nanotrack_deploy_model.om";
+    const char *modelPath = "../models/nanotrack_deploy_model_nchw.om";
     vector<string> imagePaths = {"../data/000.png", "../data/001.png"};
     vector<int> inputWidths = {127, 255}; // 示例尺寸
     vector<int> inputHeights = {127, 255};
