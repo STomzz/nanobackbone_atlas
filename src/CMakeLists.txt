@@ -47,6 +47,9 @@ message(STATUS "-------------------------------------------------------")
 include_directories(${OpenCV_INCLUDE_DIRS})
 
 
+include_directories(
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
 
 add_executable(main main_all.cpp)
 target_link_libraries(main ascendcl stdc++ opencv_core opencv_imgproc opencv_imgcodecs dl rt)

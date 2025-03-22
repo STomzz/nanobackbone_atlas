@@ -11,8 +11,8 @@
 #define ERROR_LOG(fmt, ...) fprintf(stderr, "[ERROR] " fmt "\n", ##__VA_ARGS__)
 #define times 1
 
-using namespace cv;
-using namespace std;
+// using namespace cv;
+// using namespace std;
 
 typedef enum Result
 {
@@ -24,13 +24,16 @@ class nanoTracker
 {
 public:
     nanoTracker(int32_t device, const char *ModelPath,
-                vector<int32_t> inputWidths, vector<int32_t> inputHeights);
+                std::vector<int32_t> inputWidths, std::vector<int32_t> inputHeights);
     ~nanoTracker();
     Result InitResource();
-    Result ProcessInput(const vector<string> &testImgPaths);
+    Result ProcessInput(const std::vector<std::string> &testImgPaths);
     Result Inference();
     Result GetResult();
     Result save_bin(const float *outputData, const size_t length, const char *filename);
+    // cv::Mat get_subWindow(const cv::Mat &img, const cv::Point2f &position, int model_sz, const cv::Scalar &avg_chans);
+    // Result tracker_init();
+    // Result tracker_track();
     // 其他成员函数保持相似
 private:
     void ReleaseResource();
@@ -40,23 +43,23 @@ private:
 
     uint32_t modelId_;
     const char *modelPath_;
-    vector<int32_t> modelWidths_;
-    vector<int32_t> modelHeights_;
+    std::vector<int32_t> modelWidths_;
+    std::vector<int32_t> modelHeights_;
     aclmdlDesc *modelDesc_;
     aclmdlDataset *inputDataset_;
     aclmdlDataset *outputDataset_;
 
-    vector<void *> inputBuffers_;
-    vector<size_t> inputBufferSizes_;
-    vector<void *> outputBuffers_;
-    vector<size_t> outputBufferSizes_;
+    std::vector<void *> inputBuffers_;
+    std::vector<size_t> inputBufferSizes_;
+    std::vector<void *> outputBuffers_;
+    std::vector<size_t> outputBufferSizes_;
 
-    vector<Mat> srcImages_;
+    std::vector<cv::Mat> srcImages_;
     aclrtRunMode runMode_;
 };
 
 nanoTracker::nanoTracker(int32_t device, const char *ModelPath,
-                         vector<int32_t> inputWidths, vector<int32_t> inputHeights)
+                         std::vector<int32_t> inputWidths, std::vector<int32_t> inputHeights)
     : deviceId_(device), context_(nullptr), stream_(nullptr), modelId_(0),
       modelPath_(ModelPath), modelWidths_(inputWidths), modelHeights_(inputHeights),
       modelDesc_(nullptr), inputDataset_(nullptr), outputDataset_(nullptr) {}
@@ -152,15 +155,78 @@ Result nanoTracker::InitResource()
     }
     return SUCCESS;
 }
+// cv::Mat nanoTracker::get_subWindow(const cv::Mat &im, const cv::Point2f &pos, int model_sz, int original_sz, const cv::Scalar &avg_chans)
+// {
+//     cv::Point2f center_pos = pos;
+//     if (im.empty())
+//         return cv::Mat();
+//     int sz = original_sz;
+//     cv::Size im_sz = im.size();
+//     float c = (original_sz + 1) / 2.0f;
 
-Result nanoTracker::ProcessInput(const vector<string> &imgPaths)
+//     float context_xmin = floor(center_pos.x - c + 0.5);
+//     float context_xmax = context_xmin + sz - 1;
+//     float context_ymin = floor(center_pos.y - c + 0.5);
+//     float context_ymax = context_ymin + sz - 1;
+
+//     int left_pad = static_cast<int>(max(0.0f, -context_xmin));
+//     int top_pad = static_cast<int>(max(0.0f, -context_xmax));
+//     int right_pad = static_cast<int>(max(0.0f, context_xmax - im_sz.width + 1));
+//     int bottom_pad = static_cast<int>(max(0.0f, context_ymax - im_sz.height + 1));
+
+//     context_xmin += left_pad;
+//     context_xmax += left_pad;
+//     context_ymin += top_pad;
+//     context_ymax += top_pad;
+
+//     cv::Mat im_patch;
+//     if (top_pad > 0 || bottom_pad > 0 || left_pad > 0 || right_pad > 0)
+//     {
+//         cv::Mat te_im(im.rows + top_pad + bottom_pad, im.cols + left_pad + right_pad, im.type(), avg_chans);
+
+//         cv::Rect roi_rect(left_pad, top_pad, im.cols, im.rows);
+//         im.copyTo(te_im(roi_rect));
+
+//         int xmin = static_cast<int>(context_xmin);
+//         int ymin = static_cast<int>(context_ymin);
+//         int xmax = static_cast<int>(context_xmax) + 1;
+//         int ymax = static_cast<int>(context_ymax) + 1;
+
+//         xmin = std::max(xmin, 0);
+//         ymin = std::max(ymin, 0);
+//         xmax = std::min(xmax, te_im.cols);
+//         ymax = std::min(ymax, te_im.rows);
+
+//         im_patch = te_im(cv::Rect(xmin, ymin, xmax - xmin, ymax - ymin));
+//     }
+//     else
+//     {
+//         int xmin = static_cast<int>(context_xmin);
+//         int ymin = static_cast<int>(context_ymin);
+//         int xmax = static_cast<int>(context_xmax) + 1;
+//         int ymax = static_cast<int>(context_ymax) + 1;
+
+//         xmin = std::max(xmin, 0);
+//         ymin = std::max(ymin, 0);
+//         xmax = std::min(xmax, im.cols);
+//         ymax = std::min(ymax, im.rows);
+
+//         im_patch = im(cv::Rect(xmin, ymin, xmax - xmin, ymax - ymin));
+//     }
+
+//     if(model_sz != original_sz){
+//         cv::resize(im_patch, im_patch, cv::Size(model_sz, model_sz), 0, 0, cv::INTER_LINEAR);
+//     }
+// }
+
+Result nanoTracker::ProcessInput(const std::vector<std::string> &imgPaths)
 {
     // 处理两个输入
     for (size_t i = 0; i < imgPaths.size(); ++i)
     {
-        Mat srcImage = imread(imgPaths[i]);
-        Mat resizedImage;
-        resize(srcImage, resizedImage, Size(modelWidths_[i], modelHeights_[i]));
+        cv::Mat srcImage = cv::imread(imgPaths[i]);
+        cv::Mat resizedImage;
+        resize(srcImage, resizedImage, cv::Size(modelWidths_[i], modelHeights_[i]));
 
         int32_t channels = resizedImage.channels();
         int32_t resizeHeight = resizedImage.rows;
@@ -219,7 +285,7 @@ Result nanoTracker::GetResult()
         {
             save_bin(outputData, output_shapes[i], filenames[i]);
         }
-        catch (const exception &e)
+        catch (const std::exception &e)
         {
             aclrtFreeHost(outHostData);
             throw;
@@ -231,10 +297,10 @@ Result nanoTracker::GetResult()
 }
 Result nanoTracker::save_bin(const float *outputData, const size_t length, const char *filename)
 {
-    ofstream out_file(filename, ios::binary);
+    std::ofstream out_file(filename, std::ios::binary);
     if (!out_file)
     {
-        throw runtime_error("open file failed!");
+        throw std::runtime_error("open file failed!");
     }
     out_file.write(reinterpret_cast<const char *>(outputData), length * sizeof(float));
     out_file.close();
@@ -242,7 +308,7 @@ Result nanoTracker::save_bin(const float *outputData, const size_t length, const
     if (!out_file.good())
     {
         out_file.close();
-        throw runtime_error("write file failed!");
+        throw std::runtime_error("write file failed!");
     }
 
     return SUCCESS;
@@ -320,9 +386,9 @@ int main()
     // const char* modelPath = "../models/nanotrack_all_2.om";
     // const char *modelPath = "../models/nanotrack_deploy_model.om";
     const char *modelPath = "../models/nanotrack_deploy_model_nchw.om";
-    vector<string> imagePaths = {"../data/000.png", "../data/001.png"};
-    vector<int> inputWidths = {127, 255}; // 示例尺寸
-    vector<int> inputHeights = {127, 255};
+    std::vector<std::string> imagePaths = {"../data/000.png", "../data/001.png"};
+    std::vector<int> inputWidths = {127, 255}; // 示例尺寸
+    std::vector<int> inputHeights = {127, 255};
 
     nanoTracker tracker(0, modelPath, inputWidths, inputHeights);
     if (tracker.InitResource() != SUCCESS)
@@ -337,14 +403,14 @@ int main()
         return FAILED;
     }
 
-    auto start = chrono::high_resolution_clock::now();
+    auto start = std::chrono::high_resolution_clock::now();
     for (int i = 0; i < times; ++i)
     {
         tracker.Inference();
     }
-    auto duration = chrono::duration_cast<chrono::microseconds>(
-        chrono::high_resolution_clock::now() - start);
-    cout << "FPS: " << times * 1e6 / duration.count() << endl;
+    auto duration = std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::high_resolution_clock::now() - start);
+    std::cout << "FPS: " << times * 1e6 / duration.count() << std::endl;
 
     tracker.GetResult();
     return SUCCESS;
