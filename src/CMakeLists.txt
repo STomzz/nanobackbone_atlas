@@ -39,10 +39,12 @@ link_directories(
 )
 
 find_package(OpenCV 4 REQUIRED)
+# find_package(OpenCV 4 REQUIRED COMPONENTS highgui core ...)
 message(STATUS "\n[FindLibrary]  ---------OpenCV library status-----------")
 message(STATUS "        version: ${OpenCV_VERSION}")
-message(STATUS "        libraries: ${OpenCV_LIBS}")
+message(STATUS "        all libraries: ${OpenCV_LIBS}")
 message(STATUS "        include path: ${OpenCV_INCLUDE_DIRS}")
+message(STATUS "        lib path: ${OpenCV_LIB_DIRS}")
 message(STATUS "-------------------------------------------------------")
 include_directories(${OpenCV_INCLUDE_DIRS})
 
@@ -52,7 +54,8 @@ include_directories(
     )
 
 add_executable(main main_all.cpp)
-target_link_libraries(main ascendcl stdc++ opencv_core opencv_imgproc opencv_imgcodecs dl rt)
+# target_link_libraries(main ascendcl stdc++ opencv_core opencv_imgproc opencv_imgcodecs dl rt)
+target_link_libraries(main ascendcl stdc++ dl rt ${OpenCV_LIBS})
 
 
 # install(TARGETS main DESTINATION ${CMAKE_RUNTIME_OUTPUT_DIRECTORY})

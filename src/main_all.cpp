@@ -5,10 +5,17 @@
 #include <chrono>
 #include <vector>
 #include <fstream>
+#include <math.h>
 #define INFO_LOG(fmt, ...)                               \
     fprintf(stdout, "[INFO]  " fmt "\n", ##__VA_ARGS__); \
     fflush(stdout)
 #define ERROR_LOG(fmt, ...) fprintf(stderr, "[ERROR] " fmt "\n", ##__VA_ARGS__)
+#define EXEMPLAR_SIZE 127
+#define INSTANCE_SIZE 255
+#define CONTEXT_AMOUT 0.5
+#define OUTPUT_SIZE 15
+#define INPUT0 0
+#define INPUT1 1
 #define times 1
 
 // using namespace cv;
@@ -28,12 +35,14 @@ public:
     ~nanoTracker();
     Result InitResource();
     Result ProcessInput(const std::vector<std::string> &testImgPaths);
+    Result Input_preprocess(const cv::Mat &resizedImage, int i);
     Result Inference();
     Result GetResult();
     Result save_bin(const float *outputData, const size_t length, const char *filename);
-    // cv::Mat get_subWindow(const cv::Mat &img, const cv::Point2f &position, int model_sz, const cv::Scalar &avg_chans);
-    // Result tracker_init();
-    // Result tracker_track();
+    cv::Mat get_subWindow(const cv::Mat &im, const cv::Point2f &pos, int model_sz, int original_sz, const cv::Scalar &avg_chans);
+    Result tracker_init(cv::Mat &img, const cv::Rect &bbox);
+
+    Result tracker_track(cv::Mat frame);
     // 其他成员函数保持相似
 private:
     void ReleaseResource();
@@ -56,6 +65,11 @@ private:
 
     std::vector<cv::Mat> srcImages_;
     aclrtRunMode runMode_;
+
+    cv::Point2f center_pos_;
+    cv::Size2f size_;
+    cv::Scalar channel_average_;
+    cv::Mat template_crop_;
 };
 
 nanoTracker::nanoTracker(int32_t device, const char *ModelPath,
@@ -155,69 +169,143 @@ Result nanoTracker::InitResource()
     }
     return SUCCESS;
 }
-// cv::Mat nanoTracker::get_subWindow(const cv::Mat &im, const cv::Point2f &pos, int model_sz, int original_sz, const cv::Scalar &avg_chans)
-// {
-//     cv::Point2f center_pos = pos;
-//     if (im.empty())
-//         return cv::Mat();
-//     int sz = original_sz;
-//     cv::Size im_sz = im.size();
-//     float c = (original_sz + 1) / 2.0f;
+cv::Mat nanoTracker::get_subWindow(const cv::Mat &im, const cv::Point2f &pos, int model_sz, int original_sz, const cv::Scalar &avg_chans)
+{
+    cv::Point2f center_position = pos;
+    if (im.empty())
+        return cv::Mat();
+    int sz = original_sz;
+    cv::Size im_sz = im.size();
+    float c = (original_sz + 1) / 2.0f;
 
-//     float context_xmin = floor(center_pos.x - c + 0.5);
-//     float context_xmax = context_xmin + sz - 1;
-//     float context_ymin = floor(center_pos.y - c + 0.5);
-//     float context_ymax = context_ymin + sz - 1;
+    float context_xmin = floor(center_position.x - c + 0.5);
+    float context_xmax = context_xmin + sz - 1;
+    float context_ymin = floor(center_position.y - c + 0.5);
+    float context_ymax = context_ymin + sz - 1;
 
-//     int left_pad = static_cast<int>(max(0.0f, -context_xmin));
-//     int top_pad = static_cast<int>(max(0.0f, -context_xmax));
-//     int right_pad = static_cast<int>(max(0.0f, context_xmax - im_sz.width + 1));
-//     int bottom_pad = static_cast<int>(max(0.0f, context_ymax - im_sz.height + 1));
+    int left_pad = static_cast<int>(std::max(0.0f, -context_xmin));
+    int top_pad = static_cast<int>(std::max(0.0f, -context_xmax));
+    int right_pad = static_cast<int>(std::max(0.0f, context_xmax - im_sz.width + 1));
+    int bottom_pad = static_cast<int>(std::max(0.0f, context_ymax - im_sz.height + 1));
 
-//     context_xmin += left_pad;
-//     context_xmax += left_pad;
-//     context_ymin += top_pad;
-//     context_ymax += top_pad;
+    context_xmin += left_pad;
+    context_xmax += left_pad;
+    context_ymin += top_pad;
+    context_ymax += top_pad;
 
-//     cv::Mat im_patch;
-//     if (top_pad > 0 || bottom_pad > 0 || left_pad > 0 || right_pad > 0)
-//     {
-//         cv::Mat te_im(im.rows + top_pad + bottom_pad, im.cols + left_pad + right_pad, im.type(), avg_chans);
+    cv::Mat im_patch;
+    if (top_pad > 0 || bottom_pad > 0 || left_pad > 0 || right_pad > 0)
+    {
+        cv::Mat te_im(im.rows + top_pad + bottom_pad, im.cols + left_pad + right_pad, im.type(), avg_chans);
 
-//         cv::Rect roi_rect(left_pad, top_pad, im.cols, im.rows);
-//         im.copyTo(te_im(roi_rect));
+        cv::Rect roi_rect(left_pad, top_pad, im.cols, im.rows);
+        im.copyTo(te_im(roi_rect));
 
-//         int xmin = static_cast<int>(context_xmin);
-//         int ymin = static_cast<int>(context_ymin);
-//         int xmax = static_cast<int>(context_xmax) + 1;
-//         int ymax = static_cast<int>(context_ymax) + 1;
+        int xmin = static_cast<int>(context_xmin);
+        int ymin = static_cast<int>(context_ymin);
+        int xmax = static_cast<int>(context_xmax) + 1;
+        int ymax = static_cast<int>(context_ymax) + 1;
 
-//         xmin = std::max(xmin, 0);
-//         ymin = std::max(ymin, 0);
-//         xmax = std::min(xmax, te_im.cols);
-//         ymax = std::min(ymax, te_im.rows);
+        xmin = std::max(xmin, 0);
+        ymin = std::max(ymin, 0);
+        xmax = std::min(xmax, te_im.cols);
+        ymax = std::min(ymax, te_im.rows);
 
-//         im_patch = te_im(cv::Rect(xmin, ymin, xmax - xmin, ymax - ymin));
-//     }
-//     else
-//     {
-//         int xmin = static_cast<int>(context_xmin);
-//         int ymin = static_cast<int>(context_ymin);
-//         int xmax = static_cast<int>(context_xmax) + 1;
-//         int ymax = static_cast<int>(context_ymax) + 1;
+        im_patch = te_im(cv::Rect(xmin, ymin, xmax - xmin, ymax - ymin));
+    }
+    else
+    {
+        int xmin = static_cast<int>(context_xmin);
+        int ymin = static_cast<int>(context_ymin);
+        int xmax = static_cast<int>(context_xmax) + 1;
+        int ymax = static_cast<int>(context_ymax) + 1;
 
-//         xmin = std::max(xmin, 0);
-//         ymin = std::max(ymin, 0);
-//         xmax = std::min(xmax, im.cols);
-//         ymax = std::min(ymax, im.rows);
+        xmin = std::max(xmin, 0);
+        ymin = std::max(ymin, 0);
+        xmax = std::min(xmax, im.cols);
+        ymax = std::min(ymax, im.rows);
 
-//         im_patch = im(cv::Rect(xmin, ymin, xmax - xmin, ymax - ymin));
-//     }
+        im_patch = im(cv::Rect(xmin, ymin, xmax - xmin, ymax - ymin));
+    }
 
-//     if(model_sz != original_sz){
-//         cv::resize(im_patch, im_patch, cv::Size(model_sz, model_sz), 0, 0, cv::INTER_LINEAR);
-//     }
-// }
+    if (model_sz != original_sz)
+    {
+        cv::resize(im_patch, im_patch, cv::Size(model_sz, model_sz), 0, 0, cv::INTER_LINEAR);
+    }
+    return im_patch;
+}
+
+Result nanoTracker::tracker_init(cv::Mat &img, const cv::Rect &bbox)
+{
+    center_pos_.x = bbox.x + (bbox.width - 1) / 2.0f;
+    center_pos_.y = bbox.y + (bbox.height - 1) / 2.0f;
+    size_ = cv::Size2f(bbox.width, bbox.height);
+
+    float context = CONTEXT_AMOUT * (size_.width + size_.height);
+    float w_z = size_.width + context;
+    float h_z = size_.height + context;
+    int s_z = static_cast<int>(std::round(std::sqrt(w_z * h_z)));
+
+    channel_average_ = cv::mean(img);
+    cv::Mat subWindow = get_subWindow(img, center_pos_, EXEMPLAR_SIZE, s_z, channel_average_);
+    template_crop_ = nanoTracker::Input_preprocess(subWindow, INPUT0);
+    return SUCCESS;
+}
+
+Result nanoTracker::Input_preprocess(const cv::Mat &resizedImage, int i)
+{
+    // cv::Mat resizedImage;
+    // resize(srcImage, resizedImage, cv::Size(model_Width, model_height));
+
+    int32_t channels = resizedImage.channels();
+    int32_t resizeHeight = resizedImage.rows;
+    int32_t resizeWidth = resizedImage.cols;
+    assert(resizeHeight == resizeWidth);
+    // 转换图像数据到NCHW格式
+    float *imageBytes = (float *)malloc(channels * resizeHeight * resizeWidth * sizeof(float));
+    for (int c = 0; c < channels; ++c)
+    {
+        for (int h = 0; h < resizeHeight; ++h)
+        {
+            for (int w = 0; w < resizeWidth; ++w)
+            {
+                int idx = (c * resizeHeight + h) * resizeWidth + w;
+                imageBytes[idx] = static_cast<float>(resizedImage.ptr<uchar>(h, w)[c]);
+            }
+        }
+    }
+
+    // 复制数据到设备
+    aclrtMemcpyKind kind = runMode_ == ACL_DEVICE ? ACL_MEMCPY_HOST_TO_DEVICE : ACL_MEMCPY_HOST_TO_HOST;
+    aclrtMemcpy(inputBuffers_[i], inputBufferSizes_[i], imageBytes, inputBufferSizes_[i], kind);
+    free(imageBytes);
+
+    return SUCCESS;
+}
+
+Result nanoTracker::tracker_track(cv::Mat frame)
+{
+    float context = CONTEXT_AMOUT * (size_.width + size_.height);
+    float w_z = size_.width + context;
+    float h_z = size_.height + context;
+    int s_z = static_cast<int>(std::round(std::sqrt(w_z * h_z)));
+
+    float scale_z = EXEMPLAR_SIZE / s_z;
+    int s_x = static_cast<int>(std::round(s_z * (INSTANCE_SIZE / static_cast<float>(EXEMPLAR_SIZE))));
+    cv::Mat x_Window = get_subWindow(frame, center_pos_, INSTANCE_SIZE, s_x, channel_average_);
+    if (nanoTracker::Input_preprocess(x_Window, INPUT1) != SUCCESS)
+    {
+        ERROR_LOG("Input_preprocess failed");
+        return FAILED;
+    }
+    if (nanoTracker::Inference() != SUCCESS)
+    {
+        ERROR_LOG("Inference failed");
+        return FAILED;
+    }
+
+    return SUCCESS;
+}
 
 Result nanoTracker::ProcessInput(const std::vector<std::string> &imgPaths)
 {
@@ -283,7 +371,7 @@ Result nanoTracker::GetResult()
         // save to .bin
         try
         {
-            save_bin(outputData, output_shapes[i], filenames[i]);
+            // save_bin(outputData, output_shapes[i], filenames[i]);
         }
         catch (const std::exception &e)
         {
@@ -386,7 +474,8 @@ int main()
     // const char* modelPath = "../models/nanotrack_all_2.om";
     // const char *modelPath = "../models/nanotrack_deploy_model.om";
     const char *modelPath = "../models/nanotrack_deploy_model_nchw.om";
-    std::vector<std::string> imagePaths = {"../data/000.png", "../data/001.png"};
+
+    // std::vector<std::string> imagePaths = {"../data/000.png", "../data/001.png"};
     std::vector<int> inputWidths = {127, 255}; // 示例尺寸
     std::vector<int> inputHeights = {127, 255};
 
@@ -397,21 +486,45 @@ int main()
         return FAILED;
     }
 
-    if (tracker.ProcessInput(imagePaths) != SUCCESS)
+    /*功能:读取视频文件*/
+    cv::VideoCapture capture("../video/original/input.mkv");
+    cv::Mat frame;
+    if (!capture.isOpened())
     {
-        ERROR_LOG("Process input failed");
+        std::cerr << "Error: Failed to open video file!" << std::endl;
+        return FAILED;
+    }
+    /*功能：选取目标图像*/
+    capture >> frame;
+    if (tracker.tracker_init(frame, cv::Rect(711, 680, 156, 127)) != SUCCESS)
+    {
+        ERROR_LOG("Init failed");
         return FAILED;
     }
 
-    auto start = std::chrono::high_resolution_clock::now();
-    for (int i = 0; i < times; ++i)
+    while (capture.read(frame))
     {
-        tracker.Inference();
+        tracker.tracker_track(frame);
+        tracker.GetResult();
     }
-    auto duration = std::chrono::duration_cast<std::chrono::microseconds>(
-        std::chrono::high_resolution_clock::now() - start);
-    std::cout << "FPS: " << times * 1e6 / duration.count() << std::endl;
+    capture.release();
 
-    tracker.GetResult();
+    /*功能：将模板目标 和 候选区域 进行前处理*/
+    // if (tracker.ProcessInput(imagePaths) != SUCCESS)
+    // {
+    //     ERROR_LOG("Process input failed");
+    //     return FAILED;
+    // }
+
+    // auto start = std::chrono::high_resolution_clock::now();
+    // for (int i = 0; i < times; ++i)
+    // {
+    //     tracker.Inference();
+    // }
+    // auto duration = std::chrono::duration_cast<std::chrono::microseconds>(
+    //     std::chrono::high_resolution_clock::now() - start);
+    // std::cout << "FPS: " << times * 1e6 / duration.count() << std::endl;
+
+    // tracker.GetResult();
     return SUCCESS;
 }
