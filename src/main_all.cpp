@@ -15,6 +15,10 @@
 #define CONTEXT_AMOUT 0.5
 #define OUTPUT_SIZE 15
 #define STRIDE 16
+#define PENALTY_K 0.138
+#define WINDOW_INFLUENCE 0.455
+#define LR 0.348
+#define Pi 3.14159265358979323846
 #define INPUT0 0
 #define INPUT1 1
 #define times 1
@@ -43,10 +47,13 @@ public:
     cv::Mat get_subWindow(const cv::Mat &im, const cv::Point2f &pos, int model_sz, int original_sz, const cv::Scalar &avg_chans);
 
     Result tracker_init(cv::Mat &img, const cv::Rect &bbox);
+    Result hanning_window();
     Result tracker_track(cv::Mat frame);
     Result output_convert_score(const float *);
     Result generate_points(int stride, int size);
-    Result output_convert_bbox(const float *, std::vector<cv::Point2f>);
+    std::vector<std::vector<float>> output_convert_bbox(const float *);
+    float change(float r);
+    float sz(float w, float h);
     // 其他成员函数保持相似
 private:
     void ReleaseResource();
@@ -72,6 +79,8 @@ private:
 
     cv::Point2f center_pos_;
     cv::Size2f size_;
+    float scale_z_;
+    std::vector<std::vector<float>> window_;
     cv::Scalar channel_average_;
     cv::Mat template_crop_;
     std::vector<std::vector<float>> score_;
@@ -85,6 +94,7 @@ nanoTracker::nanoTracker(int32_t device, const char *ModelPath,
       modelDesc_(nullptr), inputDataset_(nullptr), outputDataset_(nullptr)
 {
     generate_points(STRIDE, OUTPUT_SIZE);
+    hanning_window();
 }
 
 nanoTracker::~nanoTracker()
@@ -246,6 +256,23 @@ cv::Mat nanoTracker::get_subWindow(const cv::Mat &im, const cv::Point2f &pos, in
     return im_patch;
 }
 
+Result nanoTracker::hanning_window()
+{
+    window_ = std::vector<std::vector<float>>(OUTPUT_SIZE, std::vector<float>(OUTPUT_SIZE));
+    // 一维hanning窗
+    //  for (int i = 0; i < OUTPUT_SIZE; ++i)
+    //  {
+    //      hanning[i] = 0.5f * (1 - std::cos(2 * Pi * i / (OUTPUT_SIZE - 1)));
+    //  }
+
+    for (int i = 0; i < OUTPUT_SIZE; ++i)
+    {
+        for (int j = 0; j < OUTPUT_SIZE; ++j)
+        {
+            window_[i][j] = (0.5f * (1 - std::cos(2 * Pi * i / (OUTPUT_SIZE - 1)))) * (0.5f * (1 - std::cos(2 * Pi * j / (OUTPUT_SIZE - 1))))
+        }
+    }
+}
 Result nanoTracker::tracker_init(cv::Mat &img, const cv::Rect &bbox)
 {
     INFO_LOG("tracker_init");
@@ -303,7 +330,7 @@ Result nanoTracker::tracker_track(cv::Mat frame)
     float h_z = size_.height + context;
     int s_z = static_cast<int>(std::round(std::sqrt(w_z * h_z)));
 
-    float scale_z = EXEMPLAR_SIZE / s_z;
+    scale_z_ = EXEMPLAR_SIZE / s_z;
     int s_x = static_cast<int>(std::round(s_z * (INSTANCE_SIZE / static_cast<float>(EXEMPLAR_SIZE))));
     cv::Mat x_Window = get_subWindow(frame, center_pos_, INSTANCE_SIZE, s_x, channel_average_);
     if (nanoTracker::Input_preprocess(x_Window, INPUT1) != SUCCESS)
@@ -353,10 +380,23 @@ Result nanoTracker::generate_points(int stride, int size)
     return SUCCESS;
 }
 
-Result nanoTracker::output_convert_bbox(const float *output, std::vector<cv::Point2f> points)
+std::vector<std::vector<float>> nanoTracker::output_convert_bbox(const float *output)
 {
     INFO_LOG("output_convert_bbox");
-    return SUCCESS;
+    std::vector<std::vector<float>> bbox(4, std::vector<float>(225));
+    for (int i = 0; i < 225; i++)
+    {
+        // /*x1*/ bbox[0][i] = points_[i].x - *(output + i);
+        // /*y1*/ bbox[1][i] = points_[i].y - *(output + 225 + i);
+        // /*x2*/ bbox[2][i] = points_[i].x + *(output + 225 * 2 + i);
+        // /*y2*/ bbox[3][i] = points_[i].y + *(output + 225 * 3 + i);
+        // corner to center
+        /*x*/ bbox[0][i] = (points_[i].x - *(output + i) + points_[i].x + *(output + 225 * 2 + i)) * 0.5;
+        /*y*/ bbox[1][i] = (points_[i].y - *(output + 225 + i) + points_[i].y + *(output + 225 * 3 + i)) * 0.5;
+        /*w*/ bbox[2][i] = (points_[i].x + *(output + 225 * 2 + i)) - (points_[i].x - *(output + i));
+        /*h*/ bbox[3][i] = (points_[i].y + *(output + 225 * 3 + i)) - (points_[i].y - *(output + 225 + i));
+    }
+    return bbox;
 }
 
 Result nanoTracker::ProcessInput(const std::vector<std::string> &imgPaths)
@@ -407,6 +447,16 @@ Result nanoTracker::Inference()
     return SUCCESS;
 }
 
+float nanoTracker::change(float r)
+{
+    retrun std::max(r, 1.0f / r);
+}
+float nanoTracker::sz(float w, float h)
+{
+    float pad = (w + h) * 0.5f;
+    return std::sqrt((w + pad) * (h + pad));
+}
+
 Result nanoTracker::GetResult()
 {
     INFO_LOG("GetResult");
@@ -423,14 +473,30 @@ Result nanoTracker::GetResult()
 
         // 处理输出数据（示例）输出1 1*2*15*15 输出2 1*4*15*15
         float *outputData = reinterpret_cast<float *>(outHostData);
-        // save to .bin
+        std::vector<std::vector<float>> pred_bbox;
+
+        if (i == 0)
+            output_convert_score(outputData);
+        else
+            pred_bbox = output_convert_bbox(outputData);
+        float denominator = sz(size_.width * scale_z_, size_.height * scale_z_);
+        float molecule = size_.width / size_.height;
+        std::vector<float> s_c(255);
+        std::vector<float> r_c(255);
+        std::vector<float> penalty(255);
+        std::vector<float> pscore(255);
+        for (int i = 0; i < 225; i++)
+        {
+            s_c[i] = change(sz(pred_bbox[2][i], pred_bbox[3][i]) / denominator);
+            r_c[i] = chang(molecule / (pred_bbox[2][i] / pred_bbox[3][i]));
+            penalty[i] = std::exp(-(r_c[i] * s_c[i]) * PENALTY_K);
+            pscore[i] = penalty[i] * score_[1][i];
+            pscore[i] = pscore[i] * (1 - WINDOW_INFLUENCE) + window_ * WINDOW_INFLUENCE;
+        }
         try
         {
+            // save to .bin
             // save_bin(outputData, output_shapes[i], filenames[i]);
-            if (i == 0)
-                output_convert_score(outputData);
-            else
-                output_convert_bbox(outputData);
         }
         catch (const std::exception &e)
         {
