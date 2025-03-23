@@ -14,6 +14,7 @@
 #define INSTANCE_SIZE 255
 #define CONTEXT_AMOUT 0.5
 #define OUTPUT_SIZE 15
+#define STRIDE 16
 #define INPUT0 0
 #define INPUT1 1
 #define times 1
@@ -40,9 +41,12 @@ public:
     Result GetResult();
     Result save_bin(const float *outputData, const size_t length, const char *filename);
     cv::Mat get_subWindow(const cv::Mat &im, const cv::Point2f &pos, int model_sz, int original_sz, const cv::Scalar &avg_chans);
-    Result tracker_init(cv::Mat &img, const cv::Rect &bbox);
 
+    Result tracker_init(cv::Mat &img, const cv::Rect &bbox);
     Result tracker_track(cv::Mat frame);
+    Result output_convert_score(const float *);
+    Result generate_points(int stride, int size);
+    Result output_convert_bbox(const float *, std::vector<cv::Point2f>);
     // 其他成员函数保持相似
 private:
     void ReleaseResource();
@@ -70,13 +74,18 @@ private:
     cv::Size2f size_;
     cv::Scalar channel_average_;
     cv::Mat template_crop_;
+    std::vector<std::vector<float>> score_;
+    std::vector<cv::Point2f> points_;
 };
 
 nanoTracker::nanoTracker(int32_t device, const char *ModelPath,
                          std::vector<int32_t> inputWidths, std::vector<int32_t> inputHeights)
     : deviceId_(device), context_(nullptr), stream_(nullptr), modelId_(0),
       modelPath_(ModelPath), modelWidths_(inputWidths), modelHeights_(inputHeights),
-      modelDesc_(nullptr), inputDataset_(nullptr), outputDataset_(nullptr) {}
+      modelDesc_(nullptr), inputDataset_(nullptr), outputDataset_(nullptr)
+{
+    generate_points(STRIDE, OUTPUT_SIZE);
+}
 
 nanoTracker::~nanoTracker()
 {
@@ -85,6 +94,7 @@ nanoTracker::~nanoTracker()
 
 Result nanoTracker::InitResource()
 {
+    INFO_LOG("InitResource");
     // ... [保持原有初始化逻辑不变] ...
     const char *aclConfigPath = "";
     aclError ret = aclInit(aclConfigPath);
@@ -171,6 +181,7 @@ Result nanoTracker::InitResource()
 }
 cv::Mat nanoTracker::get_subWindow(const cv::Mat &im, const cv::Point2f &pos, int model_sz, int original_sz, const cv::Scalar &avg_chans)
 {
+    INFO_LOG("get_subWindow");
     cv::Point2f center_position = pos;
     if (im.empty())
         return cv::Mat();
@@ -237,6 +248,7 @@ cv::Mat nanoTracker::get_subWindow(const cv::Mat &im, const cv::Point2f &pos, in
 
 Result nanoTracker::tracker_init(cv::Mat &img, const cv::Rect &bbox)
 {
+    INFO_LOG("tracker_init");
     center_pos_.x = bbox.x + (bbox.width - 1) / 2.0f;
     center_pos_.y = bbox.y + (bbox.height - 1) / 2.0f;
     size_ = cv::Size2f(bbox.width, bbox.height);
@@ -256,7 +268,7 @@ Result nanoTracker::Input_preprocess(const cv::Mat &resizedImage, int i)
 {
     // cv::Mat resizedImage;
     // resize(srcImage, resizedImage, cv::Size(model_Width, model_height));
-
+    INFO_LOG("Input_preprocess");
     int32_t channels = resizedImage.channels();
     int32_t resizeHeight = resizedImage.rows;
     int32_t resizeWidth = resizedImage.cols;
@@ -285,6 +297,7 @@ Result nanoTracker::Input_preprocess(const cv::Mat &resizedImage, int i)
 
 Result nanoTracker::tracker_track(cv::Mat frame)
 {
+    INFO_LOG("tracker_track");
     float context = CONTEXT_AMOUT * (size_.width + size_.height);
     float w_z = size_.width + context;
     float h_z = size_.height + context;
@@ -307,8 +320,48 @@ Result nanoTracker::tracker_track(cv::Mat frame)
     return SUCCESS;
 }
 
+Result nanoTracker::output_convert_score(const float *output)
+{
+    INFO_LOG("output_convert_score");
+    // softmax  1x2x15x15 => 2x225
+    score_ = std::vector<std::vector<float>>(2, std::vector<float>(225));
+
+    for (int scorenum = 0; scorenum < 225; scorenum++)
+    {
+        float maxValue = std::max(*(output + scorenum), *(output + 225 + scorenum));
+        score_[0][scorenum] = std::exp(*(output + scorenum) - maxValue);
+        score_[1][scorenum] = std::exp(*(output + 225 + scorenum) - maxValue);
+        // score_[0][scorenum] /= (score_[0][scorenum] + score_[1][scorenum]);
+        score_[1][scorenum] /= (score_[0][scorenum] + score_[1][scorenum]);
+    }
+    return SUCCESS;
+}
+
+Result nanoTracker::generate_points(int stride, int size)
+{
+    int ori = -(size / 2) * stride;
+
+    for (int dy = 0; dy < size; ++dy)
+    {
+        for (int dx = 0; dx < size; ++dx)
+        {
+            float x = ori + dx * stride;
+            float y = ori + dy * stride;
+            points_.emplace_back(x, y);
+        }
+    }
+    return SUCCESS;
+}
+
+Result nanoTracker::output_convert_bbox(const float *output, std::vector<cv::Point2f> points)
+{
+    INFO_LOG("output_convert_bbox");
+    return SUCCESS;
+}
+
 Result nanoTracker::ProcessInput(const std::vector<std::string> &imgPaths)
 {
+    INFO_LOG("ProcessInput");
     // 处理两个输入
     for (size_t i = 0; i < imgPaths.size(); ++i)
     {
@@ -344,6 +397,7 @@ Result nanoTracker::ProcessInput(const std::vector<std::string> &imgPaths)
 
 Result nanoTracker::Inference()
 {
+    INFO_LOG("Inference");
     aclError ret = aclmdlExecute(modelId_, inputDataset_, outputDataset_);
     if (ret != ACL_SUCCESS)
     {
@@ -355,10 +409,11 @@ Result nanoTracker::Inference()
 
 Result nanoTracker::GetResult()
 {
+    INFO_LOG("GetResult");
     const std::vector<size_t> output_shapes = {1 * 2 * 15 * 15, 1 * 4 * 15 * 15};
-    const std::vector<const char *> filenames = {
-        "/workspace/STomzz/nanobackbone_atlas/out/output1.bin",
-        "/workspace/STomzz/nanobackbone_atlas/out/output2.bin"};
+    // const std::vector<const char *> filenames = {
+    //     "/workspace/STomzz/nanobackbone_atlas/out/output1.bin",
+    //     "/workspace/STomzz/nanobackbone_atlas/out/output2.bin"};
     for (size_t i = 0; i < outputBuffers_.size(); ++i)
     {
         void *outHostData = nullptr;
@@ -372,6 +427,10 @@ Result nanoTracker::GetResult()
         try
         {
             // save_bin(outputData, output_shapes[i], filenames[i]);
+            if (i == 0)
+                output_convert_score(outputData);
+            else
+                output_convert_bbox(outputData);
         }
         catch (const std::exception &e)
         {
@@ -385,6 +444,7 @@ Result nanoTracker::GetResult()
 }
 Result nanoTracker::save_bin(const float *outputData, const size_t length, const char *filename)
 {
+    INFO_LOG("save_bin");
     std::ofstream out_file(filename, std::ios::binary);
     if (!out_file)
     {
@@ -404,6 +464,7 @@ Result nanoTracker::save_bin(const float *outputData, const size_t length, const
 
 void nanoTracker::ReleaseResource()
 {
+    INFO_LOG("ReleaseResource");
     // 释放输入输出缓冲
     for (auto &buf : inputBuffers_)
     {
@@ -504,6 +565,7 @@ int main()
 
     while (capture.read(frame))
     {
+        std::cout << "=======read frame======" << std::endl;
         tracker.tracker_track(frame);
         tracker.GetResult();
     }
