@@ -54,6 +54,8 @@ public:
     std::vector<std::vector<float>> output_convert_bbox(const float *);
     float change(float r);
     float sz(float w, float h);
+    int argmax(std::vector<float> &);
+    Result Writer(cv::Mat, cv::VideoWriter);
     // 其他成员函数保持相似
 private:
     void ReleaseResource();
@@ -73,12 +75,14 @@ private:
     std::vector<size_t> inputBufferSizes_;
     std::vector<void *> outputBuffers_;
     std::vector<size_t> outputBufferSizes_;
+    std::vector<float *> outputData_;
 
     std::vector<cv::Mat> srcImages_;
     aclrtRunMode runMode_;
 
     cv::Point2f center_pos_;
     cv::Size2f size_;
+    cv::Size2f img_size_;
     float scale_z_;
     std::vector<std::vector<float>> window_;
     cv::Scalar channel_average_;
@@ -91,7 +95,7 @@ nanoTracker::nanoTracker(int32_t device, const char *ModelPath,
                          std::vector<int32_t> inputWidths, std::vector<int32_t> inputHeights)
     : deviceId_(device), context_(nullptr), stream_(nullptr), modelId_(0),
       modelPath_(ModelPath), modelWidths_(inputWidths), modelHeights_(inputHeights),
-      modelDesc_(nullptr), inputDataset_(nullptr), outputDataset_(nullptr)
+      modelDesc_(nullptr), inputDataset_(nullptr), outputDataset_(nullptr), outputData_(std::vector<float *>(2, nullptr))
 {
     generate_points(STRIDE, OUTPUT_SIZE);
     hanning_window();
@@ -258,6 +262,7 @@ cv::Mat nanoTracker::get_subWindow(const cv::Mat &im, const cv::Point2f &pos, in
 
 Result nanoTracker::hanning_window()
 {
+    INFO_LOG("hanning_window");
     window_ = std::vector<std::vector<float>>(OUTPUT_SIZE, std::vector<float>(OUTPUT_SIZE));
     // 一维hanning窗
     //  for (int i = 0; i < OUTPUT_SIZE; ++i)
@@ -269,13 +274,16 @@ Result nanoTracker::hanning_window()
     {
         for (int j = 0; j < OUTPUT_SIZE; ++j)
         {
-            window_[i][j] = (0.5f * (1 - std::cos(2 * Pi * i / (OUTPUT_SIZE - 1)))) * (0.5f * (1 - std::cos(2 * Pi * j / (OUTPUT_SIZE - 1))))
+            window_[i][j] = (0.5f * (1 - std::cos(2 * Pi * i / (OUTPUT_SIZE - 1)))) * (0.5f * (1 - std::cos(2 * Pi * j / (OUTPUT_SIZE - 1))));
         }
     }
+    return SUCCESS;
 }
 Result nanoTracker::tracker_init(cv::Mat &img, const cv::Rect &bbox)
 {
     INFO_LOG("tracker_init");
+    img_size_.width = img.cols;
+    img_size_.height = img.rows;
     center_pos_.x = bbox.x + (bbox.width - 1) / 2.0f;
     center_pos_.y = bbox.y + (bbox.height - 1) / 2.0f;
     size_ = cv::Size2f(bbox.width, bbox.height);
@@ -328,7 +336,7 @@ Result nanoTracker::tracker_track(cv::Mat frame)
     float context = CONTEXT_AMOUT * (size_.width + size_.height);
     float w_z = size_.width + context;
     float h_z = size_.height + context;
-    int s_z = static_cast<int>(std::round(std::sqrt(w_z * h_z)));
+    float s_z = std::sqrt(w_z * h_z);
 
     scale_z_ = EXEMPLAR_SIZE / s_z;
     int s_x = static_cast<int>(std::round(s_z * (INSTANCE_SIZE / static_cast<float>(EXEMPLAR_SIZE))));
@@ -350,7 +358,7 @@ Result nanoTracker::tracker_track(cv::Mat frame)
 Result nanoTracker::output_convert_score(const float *output)
 {
     INFO_LOG("output_convert_score");
-    // softmax  1x2x15x15 => 2x225
+    // softmax  1x2x15x15 => 2x225  后续只用score_[1][x]
     score_ = std::vector<std::vector<float>>(2, std::vector<float>(225));
 
     for (int scorenum = 0; scorenum < 225; scorenum++)
@@ -366,6 +374,7 @@ Result nanoTracker::output_convert_score(const float *output)
 
 Result nanoTracker::generate_points(int stride, int size)
 {
+    INFO_LOG("generate_points");
     int ori = -(size / 2) * stride;
 
     for (int dy = 0; dy < size; ++dy)
@@ -383,18 +392,19 @@ Result nanoTracker::generate_points(int stride, int size)
 std::vector<std::vector<float>> nanoTracker::output_convert_bbox(const float *output)
 {
     INFO_LOG("output_convert_bbox");
-    std::vector<std::vector<float>> bbox(4, std::vector<float>(225));
+    // std::vector<std::vector<float>> bbox(4, std::vector<float>(225));
+    std::vector<std::vector<float>> bbox(225, std::vector<float>(4));
     for (int i = 0; i < 225; i++)
     {
-        // /*x1*/ bbox[0][i] = points_[i].x - *(output + i);
-        // /*y1*/ bbox[1][i] = points_[i].y - *(output + 225 + i);
-        // /*x2*/ bbox[2][i] = points_[i].x + *(output + 225 * 2 + i);
-        // /*y2*/ bbox[3][i] = points_[i].y + *(output + 225 * 3 + i);
-        // corner to center
-        /*x*/ bbox[0][i] = (points_[i].x - *(output + i) + points_[i].x + *(output + 225 * 2 + i)) * 0.5;
-        /*y*/ bbox[1][i] = (points_[i].y - *(output + 225 + i) + points_[i].y + *(output + 225 * 3 + i)) * 0.5;
-        /*w*/ bbox[2][i] = (points_[i].x + *(output + 225 * 2 + i)) - (points_[i].x - *(output + i));
-        /*h*/ bbox[3][i] = (points_[i].y + *(output + 225 * 3 + i)) - (points_[i].y - *(output + 225 + i));
+        // bbox[0][i] = points_[i].x - *(output + i);//x1
+        // bbox[1][i] = points_[i].y - *(output + 225 + i);//y1
+        // bbox[2][i] = points_[i].x + *(output + 225 * 2 + i);//x2
+        // bbox[3][i] = points_[i].y + *(output + 225 * 3 + i);//y2
+        // corner to center bbox(4,225)=>(x,y,w,h)
+        bbox[i][0] = (points_[i].x - *(output + i) + points_[i].x + *(output + 225 * 2 + i)) * 0.5;       // x
+        bbox[i][1] = (points_[i].y - *(output + 225 + i) + points_[i].y + *(output + 225 * 3 + i)) * 0.5; // y
+        bbox[i][2] = (points_[i].x + *(output + 225 * 2 + i)) - (points_[i].x - *(output + i));           // w
+        bbox[i][3] = (points_[i].y + *(output + 225 * 3 + i)) - (points_[i].y - *(output + 225 + i));     // h
     }
     return bbox;
 }
@@ -449,12 +459,17 @@ Result nanoTracker::Inference()
 
 float nanoTracker::change(float r)
 {
-    retrun std::max(r, 1.0f / r);
+    return std::max(r, 1.0f / r);
 }
 float nanoTracker::sz(float w, float h)
 {
     float pad = (w + h) * 0.5f;
     return std::sqrt((w + pad) * (h + pad));
+}
+
+int nanoTracker::argmax(std::vector<float> &pscore)
+{
+    return std::distance(pscore.begin(), std::max_element(pscore.begin(), pscore.end()));
 }
 
 Result nanoTracker::GetResult()
@@ -472,26 +487,47 @@ Result nanoTracker::GetResult()
         aclrtMemcpy(outHostData, outputBufferSizes_[i], outputBuffers_[i], outputBufferSizes_[i], kind);
 
         // 处理输出数据（示例）输出1 1*2*15*15 输出2 1*4*15*15
-        float *outputData = reinterpret_cast<float *>(outHostData);
+        // float *outputData = reinterpret_cast<float *>(outHostData);
+        outputData_[i] = reinterpret_cast<float *>(outHostData);
         std::vector<std::vector<float>> pred_bbox;
 
-        if (i == 0)
-            output_convert_score(outputData);
-        else
-            pred_bbox = output_convert_bbox(outputData);
-        float denominator = sz(size_.width * scale_z_, size_.height * scale_z_);
-        float molecule = size_.width / size_.height;
-        std::vector<float> s_c(255);
-        std::vector<float> r_c(255);
-        std::vector<float> penalty(255);
-        std::vector<float> pscore(255);
-        for (int i = 0; i < 225; i++)
+        output_convert_score(outputData_[0]);
+        if (i == 1)
         {
-            s_c[i] = change(sz(pred_bbox[2][i], pred_bbox[3][i]) / denominator);
-            r_c[i] = chang(molecule / (pred_bbox[2][i] / pred_bbox[3][i]));
-            penalty[i] = std::exp(-(r_c[i] * s_c[i]) * PENALTY_K);
-            pscore[i] = penalty[i] * score_[1][i];
-            pscore[i] = pscore[i] * (1 - WINDOW_INFLUENCE) + window_ * WINDOW_INFLUENCE;
+            pred_bbox = output_convert_bbox(outputData_[1]);
+            float denominator = sz(size_.width * scale_z_, size_.height * scale_z_);
+            float molecule = size_.width / size_.height;
+            std::vector<float> s_c(225);
+            std::vector<float> r_c(225);
+            std::vector<float> penalty(225);
+            std::vector<float> pscore(225);
+            float *window_ptr = window_[0].data();
+            for (int i = 0; i < 225; i++)
+            {
+                // fault:s_c 没有数值 inf -> denominator = 0的问题
+                s_c[i] = change(sz(pred_bbox[2][i], pred_bbox[3][i]) / denominator);
+                r_c[i] = change(molecule / (pred_bbox[2][i] / pred_bbox[3][i]));
+                penalty[i] = std::exp(-(r_c[i] * s_c[i]) * PENALTY_K);
+                pscore[i] = penalty[i] * score_[1][i];
+                pscore[i] = pscore[i] * (1 - WINDOW_INFLUENCE) + *(window_ptr + i) * WINDOW_INFLUENCE;
+            }
+            int best_id = argmax(pscore);
+            std::cout << " ----best_id--- " << best_id << std::endl;
+            std::vector<float> best_bbox = pred_bbox[best_id];
+
+            float lr = penalty[best_id] * score_[1][best_id] * LR;
+
+            float cx = std::max(0.0f, std::min(best_bbox[0] / scale_z_ + center_pos_.x, img_size_.width));
+            float cy = std::max(0.0f, std::min(best_bbox[1] / scale_z_ + center_pos_.y, img_size_.height));
+            float width = std::max(10.0f, std::min(size_.width * (1 - lr) + best_bbox[2] * lr, img_size_.width));
+            float height = std::max(10.0f, std::min(size_.height * (1 - lr) + best_bbox[3] * lr, img_size_.height));
+
+            center_pos_.x = std::round(cx);
+            center_pos_.y = std::round(cy);
+            size_.width = std::round(width);
+            size_.height = std::round(height);
+            float best_score = score_[1][best_id];
+            std::cout << "cx cy width height score: " << cx << " " << cy << " " << width << " " << height << " " << best_score << std::endl;
         }
         try
         {
@@ -508,6 +544,20 @@ Result nanoTracker::GetResult()
     }
     return SUCCESS;
 }
+
+Result nanoTracker::Writer(cv::Mat frame, cv::VideoWriter Videowriter)
+{
+    if (frame.empty())
+    {
+        return FAILED;
+    }
+
+    cv::circle(frame, cv::Point(center_pos_.x, center_pos_.y), 2, cv::Scalar(0, 0, 255), -1);
+    Videowriter.write(frame);
+
+    return SUCCESS;
+}
+
 Result nanoTracker::save_bin(const float *outputData, const size_t length, const char *filename)
 {
     INFO_LOG("save_bin");
@@ -629,14 +679,21 @@ int main()
         return FAILED;
     }
 
+    cv::VideoWriter Videowriter(
+        "../video/results/position_out.mp4",
+        // cv::VideoWriter::fourcc('m', 'p', '4', 'v'),
+        cv::VideoWriter::fourcc('a', 'v', 'c', '1'),
+        30,
+        frame.size());
     while (capture.read(frame))
     {
         std::cout << "=======read frame======" << std::endl;
         tracker.tracker_track(frame);
         tracker.GetResult();
+        tracker.Writer(frame, Videowriter);
     }
     capture.release();
-
+    Videowriter.release();
     /*功能：将模板目标 和 候选区域 进行前处理*/
     // if (tracker.ProcessInput(imagePaths) != SUCCESS)
     // {
