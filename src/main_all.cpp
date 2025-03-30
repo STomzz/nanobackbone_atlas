@@ -1,4 +1,6 @@
 #include <opencv2/opencv.hpp>
+#include <opencv2/highgui/highgui.hpp>
+#include <opencv2/imgproc/imgproc.hpp>
 #include <dirent.h>
 #include "acl/acl.h"
 #include "label.h"
@@ -23,6 +25,7 @@
 #define INPUT1 1
 #define times 1
 
+#define DEBUG 0
 // using namespace cv;
 // using namespace std;
 
@@ -54,7 +57,6 @@ public:
     std::vector<std::vector<float>> output_convert_bbox(const float *);
     float change(float r);
     float sz(float w, float h);
-    int argmax(std::vector<float> &);
     Result Writer(cv::Mat, cv::VideoWriter);
     // 其他成员函数保持相似
 private:
@@ -81,12 +83,12 @@ private:
     aclrtRunMode runMode_;
 
     cv::Point2f center_pos_;
+    cv::Rect result_box_;
     cv::Size2f size_;
     cv::Size2f img_size_;
     float scale_z_;
     std::vector<std::vector<float>> window_;
     cv::Scalar channel_average_;
-    cv::Mat template_crop_;
     std::vector<std::vector<float>> score_;
     std::vector<cv::Point2f> points_;
 };
@@ -195,6 +197,7 @@ Result nanoTracker::InitResource()
 }
 cv::Mat nanoTracker::get_subWindow(const cv::Mat &im, const cv::Point2f &pos, int model_sz, int original_sz, const cv::Scalar &avg_chans)
 {
+
     INFO_LOG("get_subWindow");
     cv::Point2f center_position = pos;
     if (im.empty())
@@ -203,15 +206,15 @@ cv::Mat nanoTracker::get_subWindow(const cv::Mat &im, const cv::Point2f &pos, in
     cv::Size im_sz = im.size();
     float c = (original_sz + 1) / 2.0f;
 
-    float context_xmin = floor(center_position.x - c + 0.5);
-    float context_xmax = context_xmin + sz - 1;
-    float context_ymin = floor(center_position.y - c + 0.5);
-    float context_ymax = context_ymin + sz - 1;
+    int context_xmin = floor(center_position.x - c + 0.5);
+    int context_xmax = context_xmin + sz - 1;
+    int context_ymin = floor(center_position.y - c + 0.5);
+    int context_ymax = context_ymin + sz - 1;
 
-    int left_pad = static_cast<int>(std::max(0.0f, -context_xmin));
-    int top_pad = static_cast<int>(std::max(0.0f, -context_xmax));
-    int right_pad = static_cast<int>(std::max(0.0f, context_xmax - im_sz.width + 1));
-    int bottom_pad = static_cast<int>(std::max(0.0f, context_ymax - im_sz.height + 1));
+    int left_pad = std::max(0, -context_xmin);
+    int top_pad = std::max(0, -context_xmax);
+    int right_pad = std::max(0, context_xmax - im_sz.width + 1);
+    int bottom_pad = std::max(0, context_ymax - im_sz.height + 1);
 
     context_xmin += left_pad;
     context_xmax += left_pad;
@@ -222,40 +225,52 @@ cv::Mat nanoTracker::get_subWindow(const cv::Mat &im, const cv::Point2f &pos, in
     if (top_pad > 0 || bottom_pad > 0 || left_pad > 0 || right_pad > 0)
     {
         cv::Mat te_im(im.rows + top_pad + bottom_pad, im.cols + left_pad + right_pad, im.type(), avg_chans);
+        cv::copyMakeBorder(im, te_im, top_pad, bottom_pad, left_pad, right_pad, cv::BORDER_CONSTANT, avg_chans);
 
-        cv::Rect roi_rect(left_pad, top_pad, im.cols, im.rows);
-        im.copyTo(te_im(roi_rect));
+        // int xmin = static_cast<int>(context_xmin);
+        // int ymin = static_cast<int>(context_ymin);
+        // int xmax = static_cast<int>(context_xmax) + 1;
+        // int ymax = static_cast<int>(context_ymax) + 1;
 
-        int xmin = static_cast<int>(context_xmin);
-        int ymin = static_cast<int>(context_ymin);
-        int xmax = static_cast<int>(context_xmax) + 1;
-        int ymax = static_cast<int>(context_ymax) + 1;
+        // xmin = std::max(xmin, 0);
+        // ymin = std::max(ymin, 0);
+        // xmax = std::min(xmax, te_im.cols);
+        // ymax = std::min(ymax, te_im.rows);
 
-        xmin = std::max(xmin, 0);
-        ymin = std::max(ymin, 0);
-        xmax = std::min(xmax, te_im.cols);
-        ymax = std::min(ymax, te_im.rows);
-
-        im_patch = te_im(cv::Rect(xmin, ymin, xmax - xmin, ymax - ymin));
+        im_patch = te_im(cv::Rect(context_xmin, context_ymin, context_xmax + 1 - context_xmin, context_ymax + 1 - context_ymin));
     }
     else
     {
-        int xmin = static_cast<int>(context_xmin);
-        int ymin = static_cast<int>(context_ymin);
-        int xmax = static_cast<int>(context_xmax) + 1;
-        int ymax = static_cast<int>(context_ymax) + 1;
+        // int xmin = static_cast<int>(context_xmin);
+        // int ymin = static_cast<int>(context_ymin);
+        // int xmax = static_cast<int>(context_xmax) + 1;
+        // int ymax = static_cast<int>(context_ymax) + 1;
 
-        xmin = std::max(xmin, 0);
-        ymin = std::max(ymin, 0);
-        xmax = std::min(xmax, im.cols);
-        ymax = std::min(ymax, im.rows);
+        // xmin = std::max(xmin, 0);
+        // ymin = std::max(ymin, 0);
+        // xmax = std::min(xmax, im.cols);
+        // ymax = std::min(ymax, im.rows);
 
-        im_patch = im(cv::Rect(xmin, ymin, xmax - xmin, ymax - ymin));
+        im_patch = im(cv::Rect(context_xmin, context_ymin, context_xmax - context_xmin + 1, context_ymax - context_ymin + 1));
     }
 
     if (model_sz != original_sz)
     {
-        cv::resize(im_patch, im_patch, cv::Size(model_sz, model_sz), 0, 0, cv::INTER_LINEAR);
+        cv::Mat im_patch_resize;
+        cv::resize(im_patch, im_patch_resize, cv::Size(model_sz, model_sz));
+
+        // if (DEBUG)
+        // {
+        //     std::cout << "read im_patch_resize" << std::endl;
+        //     for (int i = 0; i < im_patch_resize.cols; ++i)
+        //     {
+        //         cv::Vec3b pixel = im_patch_resize.at<cv::Vec3b>(80, i);
+        //         uchar b_value = pixel[0];
+        //         std::cout << "im_patch_resize[80][" << i << "][0]" << "value:" << static_cast<int>(b_value) << std::endl;
+        //     }
+        // }
+
+        return im_patch_resize;
     }
     return im_patch;
 }
@@ -281,11 +296,14 @@ Result nanoTracker::hanning_window()
 }
 Result nanoTracker::tracker_init(cv::Mat &img, const cv::Rect &bbox)
 {
+
     INFO_LOG("tracker_init");
+    result_box_ = bbox;
+
     img_size_.width = img.cols;
     img_size_.height = img.rows;
-    center_pos_.x = bbox.x + (bbox.width - 1) / 2.0f;
-    center_pos_.y = bbox.y + (bbox.height - 1) / 2.0f;
+    center_pos_.x = bbox.x + (bbox.width - 1.0f) / 2.0f;
+    center_pos_.y = bbox.y + (bbox.height - 1.0f) / 2.0f;
     size_ = cv::Size2f(bbox.width, bbox.height);
 
     float context = CONTEXT_AMOUT * (size_.width + size_.height);
@@ -295,7 +313,7 @@ Result nanoTracker::tracker_init(cv::Mat &img, const cv::Rect &bbox)
 
     channel_average_ = cv::mean(img);
     cv::Mat subWindow = get_subWindow(img, center_pos_, EXEMPLAR_SIZE, s_z, channel_average_);
-    template_crop_ = nanoTracker::Input_preprocess(subWindow, INPUT0);
+    nanoTracker::Input_preprocess(subWindow, INPUT0);
     return SUCCESS;
 }
 
@@ -364,14 +382,16 @@ Result nanoTracker::output_convert_score(const float *output)
     for (int scorenum = 0; scorenum < 225; scorenum++)
     {
         float maxValue = std::max(*(output + scorenum), *(output + 225 + scorenum));
-        score_[0][scorenum] = std::exp(*(output + scorenum) - maxValue);
-        score_[1][scorenum] = std::exp(*(output + 225 + scorenum) - maxValue);
+        float exp1 = std::exp(*(output + scorenum) - maxValue);
+        float exp2 = std::exp(*(output + 225 + scorenum) - maxValue);
         // score_[0][scorenum] /= (score_[0][scorenum] + score_[1][scorenum]);
-        score_[1][scorenum] /= (score_[0][scorenum] + score_[1][scorenum]);
+        // score_[1][scorenum] /= (score_[0][scorenum] + score_[1][scorenum]);
+        score_[1][scorenum] = exp2 / (exp1 + exp2);
     }
     return SUCCESS;
 }
 
+//(16,15)
 Result nanoTracker::generate_points(int stride, int size)
 {
     INFO_LOG("generate_points");
@@ -396,15 +416,27 @@ std::vector<std::vector<float>> nanoTracker::output_convert_bbox(const float *ou
     std::vector<std::vector<float>> bbox(225, std::vector<float>(4));
     for (int i = 0; i < 225; i++)
     {
-        // bbox[0][i] = points_[i].x - *(output + i);//x1
-        // bbox[1][i] = points_[i].y - *(output + 225 + i);//y1
-        // bbox[2][i] = points_[i].x + *(output + 225 * 2 + i);//x2
-        // bbox[3][i] = points_[i].y + *(output + 225 * 3 + i);//y2
+        float x1 = points_[i].x - *(output + i);           // x1
+        float y1 = points_[i].y - *(output + 225 + i);     // y1
+        float x2 = points_[i].x + *(output + 225 * 2 + i); // x2
+        float y2 = points_[i].y + *(output + 225 * 3 + i); // y2
         // corner to center bbox(4,225)=>(x,y,w,h)
-        bbox[i][0] = (points_[i].x - *(output + i) + points_[i].x + *(output + 225 * 2 + i)) * 0.5;       // x
-        bbox[i][1] = (points_[i].y - *(output + 225 + i) + points_[i].y + *(output + 225 * 3 + i)) * 0.5; // y
-        bbox[i][2] = (points_[i].x + *(output + 225 * 2 + i)) - (points_[i].x - *(output + i));           // w
-        bbox[i][3] = (points_[i].y + *(output + 225 * 3 + i)) - (points_[i].y - *(output + 225 + i));     // h
+        bbox[i][0] = (x1 + x2) * 0.5f;
+        bbox[i][1] = (y1 + y2) * 0.5f;
+        bbox[i][2] = (x2 - x1);
+        bbox[i][3] = (y2 - y1);
+
+        // bbox[i][0] = (points_[i].x - *(output + i) + points_[i].x + *(output + 225 * 2 + i)) * 0.5;       // x
+        // bbox[i][1] = (points_[i].y - *(output + 225 + i) + points_[i].y + *(output + 225 * 3 + i)) * 0.5; // y
+        // bbox[i][2] = (points_[i].x + *(output + 225 * 2 + i)) - (points_[i].x - *(output + i));           // w
+        // bbox[i][3] = (points_[i].y + *(output + 225 * 3 + i)) - (points_[i].y - *(output + 225 + i));     // h
+        if (DEBUG)
+        {
+            std::cout << "   x[" << i << "] :" << bbox[i][0];
+            std::cout << "   y[" << i << "] :" << bbox[i][1];
+            std::cout << "   w[" << i << "] :" << bbox[i][2];
+            std::cout << "   h[" << i << "] :" << bbox[i][3] << std::endl;
+        }
     }
     return bbox;
 }
@@ -467,11 +499,6 @@ float nanoTracker::sz(float w, float h)
     return std::sqrt((w + pad) * (h + pad));
 }
 
-int nanoTracker::argmax(std::vector<float> &pscore)
-{
-    return std::distance(pscore.begin(), std::max_element(pscore.begin(), pscore.end()));
-}
-
 Result nanoTracker::GetResult()
 {
     INFO_LOG("GetResult");
@@ -490,10 +517,11 @@ Result nanoTracker::GetResult()
         // float *outputData = reinterpret_cast<float *>(outHostData);
         outputData_[i] = reinterpret_cast<float *>(outHostData);
         std::vector<std::vector<float>> pred_bbox;
-
-        output_convert_score(outputData_[0]);
+        if (i == 0)
+            output_convert_score(outputData_[0]);
         if (i == 1)
         {
+            //(225,4)
             pred_bbox = output_convert_bbox(outputData_[1]);
             float denominator = sz(size_.width * scale_z_, size_.height * scale_z_);
             float molecule = size_.width / size_.height;
@@ -502,30 +530,47 @@ Result nanoTracker::GetResult()
             std::vector<float> penalty(225);
             std::vector<float> pscore(225);
             float *window_ptr = window_[0].data();
+            int best_id = 0;
+            float max_pscore = 0;
             for (int i = 0; i < 225; i++)
             {
                 // fault:s_c 没有数值 inf -> denominator = 0的问题
-                s_c[i] = change(sz(pred_bbox[2][i], pred_bbox[3][i]) / denominator);
-                r_c[i] = change(molecule / (pred_bbox[2][i] / pred_bbox[3][i]));
-                penalty[i] = std::exp(-(r_c[i] * s_c[i]) * PENALTY_K);
-                pscore[i] = penalty[i] * score_[1][i];
-                pscore[i] = pscore[i] * (1 - WINDOW_INFLUENCE) + *(window_ptr + i) * WINDOW_INFLUENCE;
+                s_c[i] = change(sz(pred_bbox[i][2], pred_bbox[i][3]) / denominator);
+                r_c[i] = change(molecule / (pred_bbox[i][2] / pred_bbox[i][3]));
+                penalty[i] = std::exp(-(r_c[i] * s_c[i] - 1) * PENALTY_K);
+                // pscore[i] = penalty[i] * score_[1][i];
+                // pscore[i] = pscore[i] * (1 - WINDOW_INFLUENCE) + *(window_ptr + i) * WINDOW_INFLUENCE;
+                pscore[i] = penalty[i] * score_[1][i] * (1 - WINDOW_INFLUENCE) + *(window_ptr + i) * WINDOW_INFLUENCE;
+                if (pscore[i] > max_pscore)
+                {
+                    max_pscore = pscore[i];
+                    best_id = i;
+                }
             }
-            int best_id = argmax(pscore);
             std::cout << " ----best_id--- " << best_id << std::endl;
             std::vector<float> best_bbox = pred_bbox[best_id];
 
             float lr = penalty[best_id] * score_[1][best_id] * LR;
 
-            float cx = std::max(0.0f, std::min(best_bbox[0] / scale_z_ + center_pos_.x, img_size_.width));
-            float cy = std::max(0.0f, std::min(best_bbox[1] / scale_z_ + center_pos_.y, img_size_.height));
+            float cx = std::max(0.0f, std::min(best_bbox[0] + center_pos_.x, img_size_.width - 1));
+            float cy = std::max(0.0f, std::min(best_bbox[1] + center_pos_.y, img_size_.height - 1));
             float width = std::max(10.0f, std::min(size_.width * (1 - lr) + best_bbox[2] * lr, img_size_.width));
             float height = std::max(10.0f, std::min(size_.height * (1 - lr) + best_bbox[3] * lr, img_size_.height));
+
+            // float cx = std::max(0.0f, std::min(best_bbox[0] / scale_z_ + center_pos_.x, img_size_.width-1));
+            // float cy = std::max(0.0f, std::min(best_bbox[1] / scale_z_ + center_pos_.y, img_size_.height));
+            // float width = std::max(10.0f, std::min(size_.width * (1 - lr) + best_bbox[2] * lr, img_size_.width));
+            // float height = std::max(10.0f, std::min(size_.height * (1 - lr) + best_bbox[3] * lr, img_size_.height));
 
             center_pos_.x = std::round(cx);
             center_pos_.y = std::round(cy);
             size_.width = std::round(width);
             size_.height = std::round(height);
+
+            result_box_.x = std::max(0.0f, cx - width / 2);
+            result_box_.y = std::max(0.0f, cy - height / 2);
+            result_box_.width = std::max(10.0f, std::min(size_.width, cx + width / 2));
+            result_box_.height = std::max(10.0f, std::min(size_.height, cy + height / 2));
             float best_score = score_[1][best_id];
             std::cout << "cx cy width height score: " << cx << " " << cy << " " << width << " " << height << " " << best_score << std::endl;
         }
@@ -552,7 +597,8 @@ Result nanoTracker::Writer(cv::Mat frame, cv::VideoWriter Videowriter)
         return FAILED;
     }
 
-    cv::circle(frame, cv::Point(center_pos_.x, center_pos_.y), 2, cv::Scalar(0, 0, 255), -1);
+    // cv::circle(frame, cv::Point(center_pos_.x, center_pos_.y), 10, cv::Scalar(0, 0, 255), -1);
+    cv::rectangle(frame, result_box_, cv::Scalar(0, 255, 0), 3);
     Videowriter.write(frame);
 
     return SUCCESS;
@@ -648,9 +694,9 @@ void nanoTracker::ReleaseResource()
 
 int main()
 {
-    // const char* modelPath = "../models/nanotrack_all_2.om";
+    const char *modelPath = "../models/nanotrack_all_2.om";
     // const char *modelPath = "../models/nanotrack_deploy_model.om";
-    const char *modelPath = "../models/nanotrack_deploy_model_nchw.om";
+    // const char *modelPath = "../models/nanotrack_deploy_model_nchw.om";
 
     // std::vector<std::string> imagePaths = {"../data/000.png", "../data/001.png"};
     std::vector<int> inputWidths = {127, 255}; // 示例尺寸
@@ -665,27 +711,48 @@ int main()
 
     /*功能:读取视频文件*/
     cv::VideoCapture capture("../video/original/input.mkv");
+    // cv::VideoCapture capture("../video/original/girl_dance.mp4");
+    int width = static_cast<int>(capture.get(cv::CAP_PROP_FRAME_WIDTH));
+    int height = static_cast<int>(capture.get(cv::CAP_PROP_FRAME_HEIGHT));
+    cv::VideoWriter Videowriter(
+        "../video/results/position_out.mp4",
+        // cv::VideoWriter::fourcc('m', 'p', '4', 'v'),
+        cv::VideoWriter::fourcc('a', 'v', 'c', '1'),
+        capture.get(cv::CAP_PROP_FPS),
+        cv::Size(width, height));
     cv::Mat frame;
     if (!capture.isOpened())
     {
-        std::cerr << "Error: Failed to open video file!" << std::endl;
+        std::cerr << "Error: Failed  to open video file!" << std::endl;
         return FAILED;
     }
     /*功能：选取目标图像*/
     capture >> frame;
+    // if (tracker.tracker_init(frame, cv::Rect(711, 680, 156, 127)) != SUCCESS)
+    // if (DEBUG)
+    // {
+    //     std::cout << "read frame" << std::endl;
+    //     for (int i = 0; i < frame.cols; ++i)
+    //     {
+    //         cv::Vec3b pixel = frame.at<cv::Vec3b>(80, i);
+    //         uchar b_value = pixel[0];
+    //         std::cout << "b channel value :" << static_cast<int>(b_value) << std::endl;
+    //     }
+    // }
+    /*
+     *(x_corner,y_corner,w,h)
+     *cv::Rect(711, 680, 156, 127) input.mkv
+     *cv::Rect(255, 155, 62, 60)) girl_dance.mp4
+     */
+
     if (tracker.tracker_init(frame, cv::Rect(711, 680, 156, 127)) != SUCCESS)
     {
         ERROR_LOG("Init failed");
         return FAILED;
     }
-
-    cv::VideoWriter Videowriter(
-        "../video/results/position_out.mp4",
-        // cv::VideoWriter::fourcc('m', 'p', '4', 'v'),
-        cv::VideoWriter::fourcc('a', 'v', 'c', '1'),
-        30,
-        frame.size());
-    while (capture.read(frame))
+    tracker.Writer(frame, Videowriter);
+    // int num = 100;
+    while (capture.read(frame) /*&& num--*/)
     {
         std::cout << "=======read frame======" << std::endl;
         tracker.tracker_track(frame);
