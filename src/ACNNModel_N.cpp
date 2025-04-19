@@ -1,6 +1,6 @@
 #include "ACNNModel_N.hpp"
 #include <iostream>
-using namespace std;
+// using namespace std;
 
 ACNNModel_N::ACNNModel_N(const char *modelPath) : modelPath_(modelPath)
 {
@@ -59,7 +59,7 @@ Result ACNNModel_N::head_initDatasets()
 
     inputBufferSize_n1 = aclmdlGetInputSizeByIndex(modelDesc_, 0);
     const char *inputname_1 = aclmdlGetInputNameByIndex(modelDesc_, 0);
-    cout << "head_model inputname_1: " << inputname_1 << endl;
+    std::cout << "head_model inputname_1: " << inputname_1 << std::endl;
     aclrtMalloc(&inputBuffer_n1, inputBufferSize_n1, ACL_MEM_MALLOC_HUGE_FIRST);
     aclDataBuffer *inputData_n1 = aclCreateDataBuffer(inputBuffer_n1, inputBufferSize_n1);
     ret = aclmdlAddDatasetBuffer(inputDataset_n, inputData_n1);
@@ -75,7 +75,7 @@ Result ACNNModel_N::head_initDatasets()
 
     inputBufferSize_n2 = aclmdlGetInputSizeByIndex(modelDesc_, 1);
     const char *inputname_2 = aclmdlGetInputNameByIndex(modelDesc_, 1);
-    cout << "head_model inputname_2: " << inputname_2 << endl;
+    std::cout << "head_model inputname_2: " << inputname_2 << std::endl;
     aclrtMalloc(&inputBuffer_n2, inputBufferSize_n2, ACL_MEM_MALLOC_HUGE_FIRST);
     aclDataBuffer *inputData_n2 = aclCreateDataBuffer(inputBuffer_n2, inputBufferSize_n2);
     ret = aclmdlAddDatasetBuffer(inputDataset_n, inputData_n2);

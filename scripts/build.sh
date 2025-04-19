@@ -3,19 +3,29 @@
 ScriptPath="$( cd "$(dirname "$BASH_SOURCE")" ; pwd -P )"
 # 作用：定义模型文件所在的路径。
 ModelPath="${ScriptPath}/../model"
+BuildPath="${ScriptPath}/../build"
+BinPath="${ScriptPath}/../bin"
 
 function build()
 {
   # 如果目录   ${ScriptPath}/../build/intermediates/host   存在，则递归删除该目录。
-  if [ -d ${ScriptPath}/../build/intermediates/host ];then
-    rm -rf ${ScriptPath}/../build/intermediates/host
+  if [ -d ${BuildPath} ];then
+    rm -rf ${BuildPath}
+  fi
+  if [ -d ${BinPath} ];then
+    rm -rf "${BinPath}/"*
   fi
   #  创建目录（如果不存在）并切换到该目录。
-  mkdir -p ${ScriptPath}/../build/intermediates/host
-  cd ${ScriptPath}/../build/intermediates/host
+  mkdir -p ${ScriptPath}/../build
+  cd ${ScriptPath}/../build
 
   # 调用 CMake 配置项目，指定 C++ 编译器为   g++  ，并跳过 RPATH 设置。
-  cmake ../../../src -DCMAKE_CXX_COMPILER=g++ -DCMAKE_SKIP_RPATH=TRUE
+  cmake .. \
+         -DCMAKE_CXX_COMPILER=g++ \
+         -DCMAKE_SKIP_RPATH=TRUE  \
+         -DTEST_CODE_THREADPOOL=OFF \
+         -DTEST_CODE_KCF=ON \
+         
   # 如果 CMake 配置失败（  $? -ne 0  ），打印错误信息并返回 1。
   if [ $? -ne 0 ];then
     echo "[ERROR] cmake error, Please check your environment!"

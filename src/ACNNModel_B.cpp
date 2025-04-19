@@ -1,6 +1,6 @@
 #include "ACNNModel_B.hpp"
 #include <iostream>
-using namespace std;
+// using namespace std;
 
 ACNNModel_B::ACNNModel_B(const char *modelPath) : modelPath_(modelPath)
 {
@@ -103,7 +103,7 @@ Result ACNNModel_B::backbone_ProcessInput(cv::Mat &img)
     int32_t Height = img.rows;
     int32_t Weight = img.cols;
     imageBytes = (float *)malloc(1 * channel * Height * Weight * sizeof(float));
-    memset(imageBytes, 0, 1 * channel * Height * Weight * sizeof(float));
+    std::memset(imageBytes, 0, 1 * channel * Height * Weight * sizeof(float));
 
     // 图像转换为字节，从 HWC 到 NCHW
     for (int h = 0; h < Height; ++h)

@@ -12,14 +12,15 @@
 #include "acl/acl.h"
 
 #include "nanotrack.hpp"
+#include "kcftracker.hpp"
 
-using namespace cv;
-using namespace std;
+// using namespace cv;
+// using namespace std;
 
 constexpr bool INFER_ONCE = false;
 int low_cf_num = 0;
-Rect bbox_first;
-unordered_map<string, Mat> maintain_frame;
+cv::Rect bbox_first;
+std::unordered_map<std::string, cv::Mat> maintain_frame;
 
 void printHelp()
 {
@@ -33,6 +34,15 @@ void printHelp()
               << "Options:\n"
               << "\t--help,-h        \tPrint usage information and exit.\n"
               << std::endl;
+}
+void draw_text(cv::Mat &frame, std::string text)
+{
+    int fontFace = cv::FONT_HERSHEY_SIMPLEX;
+    double fontScale = 1.0;
+    cv::Scalar color(0, 0, 255);
+    int thickness = 2;
+    cv::Point org(30, 50);
+    cv::putText(frame, text, org, fontFace, fontScale, color, thickness);
 }
 
 Result ACNNInit(int32_t &deviceId, aclrtContext &context, aclrtStream &stream)
@@ -137,12 +147,12 @@ int main(int argc, char **argv)
             return -1;
         }
     }
-    string video_path = *(argv + 1);
-    string video_out_path = *(argv + 2);
-    bbox_first.x = stoi(*(argv + 3));
-    bbox_first.y = stoi(*(argv + 4));
-    bbox_first.width = stoi(*(argv + 5));
-    bbox_first.height = stoi(*(argv + 6));
+    std::string video_path = *(argv + 1);
+    std::string video_out_path = *(argv + 2);
+    bbox_first.x = std::stoi(*(argv + 3));
+    bbox_first.y = std::stoi(*(argv + 4));
+    bbox_first.width = std::stoi(*(argv + 5));
+    bbox_first.height = std::stoi(*(argv + 6));
     //(706, 679, 155, 141);
 
     /*---------------------------------------------------ACNNInit---------------------------------------------------*/
@@ -187,134 +197,91 @@ int main(int argc, char **argv)
     nanotrack.initsource();
     INFO_LOG(" nanotrack initsource SUCCES");
 
-    if (INFER_ONCE)
+    /*------------------------------------------------------视频帧初始化-------------------------------------------------------*/
+    // const string video_path = "../data/girl_dance.mp4";
+    int frame_count = 1;
+    // const string video_path = "../data/tv_tuanliu.mkv";
+    cv::VideoCapture cap(video_path);
+    // 检查视频是否成功打开
+    if (!cap.isOpened())
     {
-        // 指定推理图片路径
-        string image_path0 = "../image/frame_0000.png";
-        string image_path2 = "../image/frame_0002.png";
-
-        // 使用 OpenCV 读取图片
-        Mat first_frame = cv::imread(image_path0);
-        Mat track_frame = cv::imread(image_path2);
-        Mat temp_frame = first_frame;
-        std::vector<float> img_bbox;
-        // 检查图片是否正确读取
-        if (first_frame.empty())
-        {
-            std::cerr << "Error: image_path0 image not found or unable to load." << std::endl;
-            return -1;
-        }
-        // Rect bbox_first(275, 149, 62, 60); // gir_dance.mp4
-        // Rect bbox_first(706, 679, 155, 141); // tv_tuanliu.mkv
-        // 绘制边界框
-        rectangle(temp_frame, bbox_first, cv::Scalar(0, 255, 0), 2);
-        // 保存第一帧到本地
-        string output_path = "../results/INFER_ONCE_first_frame_with_bbox.jpg";
-        if (!imwrite(output_path, temp_frame))
-        {
-            cerr << "Error: Could not save the INFER_ONCE first frame to " << output_path << endl;
-            return -1;
-        }
-        cout << "First frame with bounding box saved to " << output_path << endl;
-        nanotrack.init(first_frame, bbox_first);
-        INFO_LOG(" nanotrack.init SUCCES");
-        double t1 = getTickCount();
-        img_bbox = nanotrack.track(track_frame);
-        double t2 = getTickCount();
-        double process_time_ms = (t2 - t1) * 1000 / getTickFrequency();
-        double fps_value = getTickFrequency() / (t2 - t1);
-        cout << "每帧处理时间: " << process_time_ms << " ms, FPS: " << fps_value << endl;
-        cv::Rect resultBox(img_bbox[0], img_bbox[1], img_bbox[2], img_bbox[3]);
-        // 绘制边界框
-        rectangle(track_frame, resultBox, cv::Scalar(0, 255, 0), 3);
-        imwrite("../results/INFER_ONCE_result.jpg", track_frame);
-        INFO_LOG(" Rectangle frame SUCCES");
+        std::cerr << "Error: Could not open video.\n";
+        return -1;
     }
-    else
-    {
-        /*------------------------------------------------------视频帧初始化-------------------------------------------------------*/
-        // const string video_path = "../data/girl_dance.mp4";
-        int frame_count = 1;
-        // const string video_path = "../data/tv_tuanliu.mkv";
-        VideoCapture cap(video_path);
-        // 检查视频是否成功打开
-        if (!cap.isOpened())
-        {
-            cerr << "Error: Could not open video." << endl;
-            return -1;
-        }
-        // 获取视频帧率和帧尺寸
-        double fps = cap.get(CAP_PROP_FPS);
-        int width = static_cast<int>(cap.get(CAP_PROP_FRAME_WIDTH));
-        int height = static_cast<int>(cap.get(CAP_PROP_FRAME_HEIGHT));
+    // 获取视频帧率和帧尺寸
+    double fps = cap.get(cv::CAP_PROP_FPS);
+    int width = static_cast<int>(cap.get(cv::CAP_PROP_FRAME_WIDTH));
+    int height = static_cast<int>(cap.get(cv::CAP_PROP_FRAME_HEIGHT));
 
-        // 创建视频写入器
-        // VideoWriter video_writer("../results/output_video.mp4", VideoWriter::fourcc('a', 'v', 'c', '1'), fps, Size(width, height));
-        VideoWriter video_writer(video_out_path, VideoWriter::fourcc('a', 'v', 'c', '1'), fps, Size(width, height));
-        // 读取一帧初始帧
-        Mat frame;
+    // 创建视频写入器
+    // VideoWriter video_writer("../results/output_video.mp4", VideoWriter::fourcc('a', 'v', 'c', '1'), fps, Size(width, height));
+    cv::VideoWriter video_writer(video_out_path, cv::VideoWriter::fourcc('a', 'v', 'c', '1'), fps, cv::Size(width, height));
+    // 读取一帧初始帧
+    cv::Mat frame;
+    if (!cap.read(frame))
+    {
+        std::cerr << "Error: Could not read the first frame." << std::endl;
+        return -1;
+    }
+    // 维护第一帧模板
+
+    maintain_frame["first"] = frame;
+
+    // Rect bbox_first(275, 149, 62, 60);
+    // Rect bbox_first(706, 679, 155, 141);
+    // 绘制边界框
+    cv::rectangle(frame, bbox_first, cv::Scalar(0, 255, 0), 2);
+    // 保存第一帧到本地
+    std::string output_path = "../results/first_frame_with_bbox.jpg";
+    if (!imwrite(output_path, frame))
+    {
+        std::cerr << "Error: Could not save the first frame to " << output_path << std::endl;
+        return -1;
+    }
+    std::cout << "First frame with bounding box saved to " << output_path << std::endl;
+    nanotrack.init(frame, bbox_first);
+    INFO_LOG(" nanotrack.init SUCCES");
+
+    // std::vector<float> video_bbox;
+    cv::Rect video_bbox;
+    /*------------------------------------------------------视频帧初始化-------------------------------------------------------*/
+
+    /*------------------------------------------------------视频帧追踪-------------------------------------------------------*/
+    while (true)
+    {
         if (!cap.read(frame))
         {
-            cerr << "Error: Could not read the first frame." << endl;
+            std::cout << "End of video or unable to read frame." << std::endl;
+            break;
+        }
+
+        double t1 = cv::getTickCount();
+        // 启动追踪
+        video_bbox = nanotrack.track(frame);
+        double t2 = cv::getTickCount();
+        double process_time_ms = (t2 - t1) * 1000 / cv::getTickFrequency();
+        double fps_value = cv::getTickFrequency() / (t2 - t1);
+        std::cout << "每帧处理时间: " << process_time_ms << " ms, FPS: " << fps_value << std::endl;
+        // cv::Rect video_bbox(video_bbox[0], video_bbox[1], video_bbox[2], video_bbox[3]);
+        if (video_bbox.x < 0 || video_bbox.y < 0 || video_bbox.x + video_bbox.width > frame.cols || video_bbox.y + video_bbox.height > frame.rows)
+        {
+            std::cerr << "Error: ROI is out of frame bounds!" << std::endl;
             return -1;
         }
-        // 维护第一帧模板
+        //  绘制边界框
+        cv::rectangle(frame, video_bbox, cv::Scalar(0, 255, 0), 3);
+        INFO_LOG(" Rectangle frame SUCCES");
+        // debug frame
+        cv::imwrite("../image/debug_frame.jpg", frame);
 
-        maintain_frame["first"] = frame;
-
-        // Rect bbox_first(275, 149, 62, 60);
-        // Rect bbox_first(706, 679, 155, 141);
-        // 绘制边界框
-        rectangle(frame, bbox_first, cv::Scalar(0, 255, 0), 2);
-        // 保存第一帧到本地
-        string output_path = "../results/first_frame_with_bbox.jpg";
-        if (!imwrite(output_path, frame))
-        {
-            cerr << "Error: Could not save the first frame to " << output_path << endl;
-            return -1;
-        }
-        cout << "First frame with bounding box saved to " << output_path << endl;
-        nanotrack.init(frame, bbox_first);
-        INFO_LOG(" nanotrack.init SUCCES");
-
-        std::vector<float> video_bbox;
-        /*------------------------------------------------------视频帧初始化-------------------------------------------------------*/
-
-        /*------------------------------------------------------视频帧追踪-------------------------------------------------------*/
-        while (true)
-        {
-            if (!cap.read(frame))
-            {
-                cout << "End of video or unable to read frame." << endl;
-                break;
-            }
-
-            double t1 = getTickCount();
-            // 启动追踪
-            video_bbox = nanotrack.track(frame);
-            double t2 = getTickCount();
-            double process_time_ms = (t2 - t1) * 1000 / getTickFrequency();
-            double fps_value = getTickFrequency() / (t2 - t1);
-            cout << "每帧处理时间: " << process_time_ms << " ms, FPS: " << fps_value << endl;
-            cv::Rect resultBox(video_bbox[0], video_bbox[1], video_bbox[2], video_bbox[3]);
-            if (resultBox.x < 0 || resultBox.y < 0 || resultBox.x + resultBox.width > frame.cols || resultBox.y + resultBox.height > frame.rows)
-            {
-                std::cerr << "Error: ROI is out of frame bounds!" << std::endl;
-                return -1;
-            }
-            // 绘制边界框
-            rectangle(frame, resultBox, cv::Scalar(0, 255, 0), 3);
-            INFO_LOG(" Rectangle frame SUCCES");
-
-            // 写入视频
-            video_writer.write(frame);
-            frame_count++;
-            cout << "now frame  is " << frame_count << endl;
-        }
-        // 释放资源
-        video_writer.release();
-        cap.release();
+        // 写入视频
+        video_writer.write(frame);
+        frame_count++;
+        std::cout << "now frame  is " << frame_count << std::endl;
     }
+    // 释放资源
+    video_writer.release();
+    cap.release();
 
     /*------------------------------------------------------视频帧追踪-------------------------------------------------------*/
     ret = ACNNDeInit(deviceId_, context_, stream_);

@@ -2,6 +2,7 @@
 #include <cstdlib>
 #include <string>
 #include "nanotrack.hpp"
+#include "kcftracker.hpp"
 #include <numeric> // for std::accumulate
 #include <cmath>   // for std::max and std::sqrt
 #include <map>
@@ -15,10 +16,11 @@
 #include <opencv2/videoio.hpp>
 
 extern std::unordered_map<std::string, cv::Mat> maintain_frame;
-extern Rect bbox_first;
+extern cv::Rect bbox_first;
 extern int low_cf_num;
+extern void draw_text(cv::Mat &frame, std::string text);
 
-using namespace std;
+// using namespace std;
 
 std::vector<float> convert_score(const std::vector<float> &input)
 {
@@ -90,15 +92,15 @@ void NanoTrack::init(cv::Mat img, cv::Rect bbox)
     // 60
     target_sz.y = bbox.height;
 
-    cout << "bbox" << bbox << endl;
-    cout << "target_pos" << target_pos << endl;
-    cout << "target_sz" << target_sz << endl;
+    std::cout << "bbox" << bbox << std::endl;
+    std::cout << "target_pos" << target_pos << std::endl;
+    std::cout << "target_sz" << target_sz << std::endl;
     // 303
     float wc_z = target_sz.x + cfg.context_amount * (target_sz.x + target_sz.y);
     //
     float hc_z = target_sz.y + cfg.context_amount * (target_sz.x + target_sz.y);
     // 122
-    float s_z = round(sqrt(wc_z * hc_z));
+    float s_z = std::round(std::sqrt(wc_z * hc_z));
 
     // 对于多通道图像（如 RGB 图像），  cv::Scalar   的值是一个包含多个通道平均值的向量。
     cv::Scalar avg_chans = cv::mean(img);
@@ -106,7 +108,7 @@ void NanoTrack::init(cv::Mat img, cv::Rect bbox)
     // (img,(784,250),127,296,avg_chans(3))
     z_crop = get_subwindow_tracking(img, target_pos, cfg.exemplar_size, int(s_z), avg_chans); // cv::Mat BGR order
 
-    vector<vector<float>> acnnOutputs;
+    std::vector<std::vector<float>> acnnOutputs;
     INFO_LOG("START module_T127.runACNN  run ");
     Result ret = module_T127.runACNN_B(acnnOutputs, z_crop);
     if (ret != SUCCESS)
@@ -121,6 +123,10 @@ void NanoTrack::init(cv::Mat img, cv::Rect bbox)
     this->state.im_w = img.cols;
     this->state.target_pos = target_pos;
     this->state.target_sz = target_sz;
+
+    /*-----------初始化kcf-----------*/
+    // KCFTracker tracker(kcf_Config.HOG, kcf_Config.FIXEDWINDOW, kcf_Config.MULTISCALE, kcf_Config.LAB);
+    kcf_tracker = KCFTracker(true, true, false, false);
 }
 
 // 实现 change 函数
@@ -136,7 +142,8 @@ float sz(float w, float h)
     return std::sqrt((w + pad) * (h + pad));
 }
 
-std::vector<float> NanoTrack::track(cv::Mat &im)
+// std::vector<float> NanoTrack::track(cv::Mat &im)
+cv::Rect NanoTrack::track(cv::Mat &im)
 {
 
     cv::Point2f target_pos = this->state.target_pos;
@@ -157,7 +164,7 @@ std::vector<float> NanoTrack::track(cv::Mat &im)
     x_crop = get_subwindow_tracking(im, target_pos, cfg.instance_size, std::round(s_x), state.channel_ave);
 
     // 图像255的输入
-    vector<vector<float>> acnnOutputs;
+    std::vector<std::vector<float>> acnnOutputs;
     INFO_LOG("START module_X255.runACNN  run ");
     Result ret = module_X255.runACNN_B(acnnOutputs, x_crop);
     if (ret != SUCCESS)
@@ -173,7 +180,7 @@ std::vector<float> NanoTrack::track(cv::Mat &im)
     // 创建指向 result_X_transposedVec 的指针
     float *ptr_X = result_X.data();
 
-    vector<vector<float>> acnnOutputs_2;
+    std::vector<std::vector<float>> acnnOutputs_2;
     cv::Mat emptyMat; // 创建一个空的 cv::Mat 对象
     INFO_LOG("START net_head.runACNN_Head  run ");
     ret = net_head.runACNN_N(acnnOutputs_2, ptr_T, ptr_X);
@@ -183,13 +190,13 @@ std::vector<float> NanoTrack::track(cv::Mat &im)
     }
     INFO_LOG("FINISH net_head.runACNN_Head  run ");
 
-    vector<float> cls_score_result = acnnOutputs_2[0];
-    vector<float> bbox_pred_result = acnnOutputs_2[1];
+    std::vector<float> cls_score_result = acnnOutputs_2[0];
+    std::vector<float> bbox_pred_result = acnnOutputs_2[1];
 
     int cols = 15;
     int rows = 15;
 
-    vector<float> cls_scores = convert_score(cls_score_result);
+    std::vector<float> cls_scores = convert_score(cls_score_result);
     std::vector<float> pred_x1(cols * rows, 0), pred_y1(cols * rows, 0), pred_x2(cols * rows, 0), pred_y2(cols * rows, 0);
     std::vector<float> pred_xc(cols * rows, 0), pred_yc(cols * rows, 0), pred_w(cols * rows, 0), pred_h(cols * rows, 0);
 
@@ -256,24 +263,31 @@ std::vector<float> NanoTrack::track(cv::Mat &im)
     }
 
     // 若maxScore得分过低 启动KCF重新寻找
-    if (maxScore < 0.9)
+    if (maxScore < 0.1)
     {
-        // 启动kcf
-        INFO_LOG("START KCF ");
-        cv::Ptr<cv::TrackerKCF> kcf_tracker = cv::TrackerKCF::create();
-        Rect new_bbox = bbox_first;
-        // 采用第一帧作为模板/或者最高得分帧作为模板
-        kcf_tracker->init(maintain_frame["first"], new_bbox);
-        kcf_tracker->update(im, new_bbox);
-        target_pos.x = new_bbox.x + new_bbox.width * 0.5;
-        target_pos.y = new_bbox.y + new_bbox.height * 0.5;
-        state.target_pos = target_pos;
+        /*===============启动kcf_official_api===============*/
+        // INFO_LOG("START KCF ");
+        // cv::Ptr<cv::TrackerKCF> kcf_tracker = cv::TrackerKCF::create();
+        // Rect new_bbox = bbox_first;
+        // // 采用第一帧作为模板/或者最高得分帧作为模板
+        // kcf_tracker->init(maintain_frame["first"], new_bbox);
+        // kcf_tracker->update(im, new_bbox);
 
-        // 保存低置信度帧
-        rectangle(im, new_bbox, cv::Scalar(0, 255, 0), 2);
-        string lowconf_filename = "../results/lowConfi_frame_with_bbox_" + to_string(low_cf_num) + ".jpg";
-        imwrite(lowconf_filename, im);
-        return {(float)new_bbox.x, (float)new_bbox.y, (float)new_bbox.width, (float)new_bbox.height};
+        // cout << " kcf Rect: " << new_bbox << endl;
+
+        // target_pos.x = new_bbox.x + new_bbox.width * 0.5;
+        // target_pos.y = new_bbox.y + new_bbox.height * 0.5;
+        // state.target_pos = target_pos;
+
+        // // 保存低置信度帧
+        // rectangle(im, new_bbox, cv::Scalar(0, 255, 0), 2);
+        // string lowconf_filename = "../results/lowConfi_frame_with_bbox_" + to_string(low_cf_num) + ".jpg";
+        // imwrite(lowconf_filename, im);
+        // return {(float)new_bbox.x, (float)new_bbox.y, (float)new_bbox.width, (float)new_bbox.height};
+
+        /*===============3part kcf api===============*/
+        // kcf_tracker.init();
+        // kcf_tracker.update();
     }
     else
     {
@@ -293,10 +307,10 @@ std::vector<float> NanoTrack::track(cv::Mat &im)
         float height = target_sz.x * (1 - lr) + max_predh * lr;
 
         // box_clip
-        cx = std::max(0.0f, min(state.im_w - 1, cx));
-        cy = std::max(0.0f, min(state.im_h - 1, cy));
-        width = float(std::max(10.0f, min(state.im_w, width)));
-        height = float(std::max(10.0f, min(state.im_h, height)));
+        cx = std::max(0.0f, std::min(state.im_w - 1, cx));
+        cy = std::max(0.0f, std::min(state.im_h - 1, cy));
+        width = float(std::max(10.0f, std::min(state.im_w, width)));
+        height = float(std::max(10.0f, std::min(state.im_h, height)));
 
         // cout<<"new bbox cliped:"<<cx<<" , "<<cy<<" , "<<width<<" , "<<height<<endl;
 
@@ -318,17 +332,24 @@ std::vector<float> NanoTrack::track(cv::Mat &im)
         width = std::max(10.0f, x2 - x1);
         height = std::max(10.0f, y2 - y1);
 
-        cout << "new bbox cliped:" << x1 << " , " << y1 << " , " << width << " , " << height << endl;
+        std::cout << "new bbox cliped:" << x1 << " , " << y1 << " , " << width << " , " << height << std::endl;
 
         // 更新 bbox
-        std::vector<float> bbox;
-        bbox.push_back(x1);
-        bbox.push_back(y1);
-        bbox.push_back(width);
-        bbox.push_back(height);
+        // std::vector<float> bbox;
+        // bbox.push_back(x1);
+        // bbox.push_back(y1);
+        // bbox.push_back(width);
+        // bbox.push_back(height);
+        cv::Rect bbox;
+        bbox.x = x1;
+        bbox.y = y1;
+        bbox.width = width;
+        bbox.height = height;
 
         float cls_score_max = cls_scores[max_idx];
         printf("bestId : %d , bestScore : %f , x : %f , y : %f , w : %f , h : %f", max_idx, cls_score_max, x1, y1, width, height);
+
+        draw_text(im, "score : " + std::to_string(cls_score_max));
 
         return bbox;
     }
@@ -365,7 +386,7 @@ void NanoTrack::create_grids()
     int sz = cfg.score_size; // 16x16
     int ori = 0;
     ori = ori - round(sz / 2) * cfg.total_stride;
-    cout << "ori:" << ori << endl;
+    std::cout << "ori:" << ori << std::endl;
     this->grid_to_search_x.resize(sz * sz, 0);
     this->grid_to_search_y.resize(sz * sz, 0);
 

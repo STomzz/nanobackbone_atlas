@@ -1,5 +1,6 @@
 .vscode
 build
 data/tv_tuanliu.mkv
-out/main
+image/*
+bin/*
 results/*
